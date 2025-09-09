@@ -1,0 +1,12 @@
+openai>=1.0.0
+unstructured[all-docs]
+langchain
+tiktoken
+pandas
+pydantic==2.*
+python-magic-bin==0.4.14
+beautifulsoup4
+lxml
+PyPDF2
+pyyaml
+instructor>=1.0.0

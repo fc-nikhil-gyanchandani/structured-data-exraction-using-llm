@@ -1,0 +1,849 @@
+version: 0.1
+defaults:
+  country: CA
+  country_context: "Canada (CBSA Harmonized Tariff)"
+  currency: CAD
+  evidence_required: 1
+  mean_confidence_min: 0.80
+  # Global source path filter - can be overridden per model
+  source_path_filter: null
+
+models:
+  countries_stg:
+    description: Master list of countries with ISO 3166-1 alpha-2 codes (staging)
+    primary_key: [iso2]
+    key_fields: [iso2]
+    # Filter chunks to only process specific source files
+    source_path_filter: ["countries-pays-eng.pdf", "countriesandcurrencies.csv"]
+    fields:
+      - name: iso2
+        dtype: string
+        required: true
+        regex: "^[A-Z]{2}$"
+        normalize: upper
+        hints: ["ISO 3166-1 alpha-2", "Country Code", "ISO2", "Alpha-2"]
+        examples: ["AF","AD","AO","AG","AR","AM","AU","AT","AL","DZ"]
+
+      - name: name
+        dtype: string
+        required: true
+        normalize: collapse_whitespace
+        hints: ["Country", "Country Name", "Name"]
+        examples: ["Afghanistan","Andorra","Angola","Antigua and Barbuda","Argentina"]
+
+    constraints:
+      - name: iso2_format
+        expression: "iso2 ~ '^[A-Z]{2}$'"
+      - name: non_empty_name
+        expression: "length(trim(name)) > 0"
+
+    ingestion_gate:
+      binary_rules:
+        - required_fields_present
+        - no_constraint_violations
+      quality_thresholds:
+        coverage_min: 1.0
+        mean_confidence_min: 0.95
+
+    evidence_rules:
+      min_spans_per_field: 1
+      require_page_numbers: true
+
+
+  currencies_stg:
+    description: Master list of currencies with ISO 4217 codes (staging)
+    primary_key: [code]
+    key_fields: [code]
+    # Filter chunks to only process countries and currencies file
+    source_path_filter: ["countriesandcurrencies.csv"]
+    fields:
+      - name: code
+        dtype: string
+        required: true
+        regex: "^[A-Z]{3}$"
+        normalize: upper
+        hints: ["ISO 4217 code", "Currency Code", "Code"]
+        examples: ["AFN","ALL","DZD","EUR","AOA","XCD","ARS","AMD","AUD","AZN"]
+        # enum_source:
+        #   type: athena
+        #   sql: SELECT DISTINCT code FROM gold.currencies
+
+      - name: name
+        dtype: string
+        required: true
+        normalize: collapse_whitespace
+        hints: ["Currency", "Currency Name", "Name"]
+        examples: ["Afghan Afghani","Albanian Lek","Algerian Dinar","Euro","Angolan Kwanza"]
+
+    constraints:
+      - name: code_format
+        expression: "code ~ '^[A-Z]{3}$'"
+      - name: non_empty_name
+        expression: "length(trim(name)) > 0"
+
+    ingestion_gate:
+      binary_rules:
+        - required_fields_present
+        - no_constraint_violations
+      quality_thresholds:
+        coverage_min: 1.0
+        mean_confidence_min: 0.95
+
+    evidence_rules:
+      min_spans_per_field: 1
+      require_page_numbers: true
+
+  provinces_stg:
+    description: Province/state-level administrative divisions linked to countries (staging)
+    primary_key: [country_iso, province_code]
+    key_fields: [province_code, country_iso]
+    # Filter chunks to only process Canadian tax rates file
+    source_path_filter: ["canadian_tax_rates_by_province.csv"]
+    fields:
+      - name: country_iso
+        dtype: string
+        required: true
+        regex: "^[A-Z]{2}$"
+        normalize: upper
+        hints: ["Country", "Country ISO", "ISO2"]
+        examples: ["CA"]
+
+      - name: province_code
+        dtype: string
+        required: true
+        regex: "^[A-Z]{2}$"
+        normalize: upper
+        hints: ["Province Code", "State Code", "Subdivision code"]
+        examples: ["AB","MB","ON","QC","NB","BC","SK","NL","NS","PE"]
+
+      - name: name
+        dtype: string
+        required: true
+        normalize: collapse_whitespace
+        hints: ["Province Name","State Name","Subdivision"]
+        examples: ["Alberta","Manitoba","Ontario","Quebec","New Brunswick"]
+
+    constraints:
+      - name: country_iso_format
+        expression: "country_iso ~ '^[A-Z]{2}$'"
+      - name: province_code_format
+        expression: "province_code ~ '^[A-Z]{2}$'"
+      - name: non_empty_name
+        expression: "length(trim(name)) > 0"
+
+    ingestion_gate:
+      binary_rules:
+        - required_fields_present
+        - no_constraint_violations
+      quality_thresholds:
+        coverage_min: 1.0
+        mean_confidence_min: 0.95
+
+    evidence_rules:
+      min_spans_per_field: 1
+      require_page_numbers: true
+
+  hs_codes_stg:
+    description: Harmonized System (HS) codes with short descriptions (staging)
+    primary_key: [hs_code]
+    key_fields: [hs_code]
+    # Filter chunks to only process TPHS file
+    source_path_filter: ["TPHS.csv"]
+    fields:
+      - name: hs_code
+        dtype: string
+        required: true
+        regex: "^[0-9]{6,10}$"
+        hints: ["HS Code", "Tariff Code", "Customs Code", "Harmonized Code"]
+        examples: ["0101210000","0102210090","0102290010","0102290090","0101290010"]
+
+      - name: description
+        dtype: string
+        required: true
+        normalize: collapse_whitespace
+        hints: ["Description","Goods Description","HS Description"]
+        examples: ["Pure-bred breeding animals","Other","Dairy","For slaughter","For racing"]
+
+    constraints:
+      - name: hs_code_format
+        expression: "length(hs_code) between 6 and 10 and hs_code ~ '^[0-9]+$'"
+      - name: non_empty_description
+        expression: "length(trim(description)) > 0"
+
+    ingestion_gate:
+      binary_rules:
+        - required_fields_present
+        - no_constraint_violations
+      quality_thresholds:
+        coverage_min: 1.0
+        mean_confidence_min: 0.95
+
+    evidence_rules:
+      min_spans_per_field: 1
+      require_page_numbers: true
+
+
+  tax_types_stg:
+    description: Tax types applicable per country with flags for cascading and inclusion in price (staging)
+    primary_key: [country_iso, tax_code]
+    key_fields: [country_iso, tax_code]
+    # Filter chunks to only process Canadian tax rates file
+    source_path_filter: ["canadian_tax_rates_by_province.csv"]
+    fields:
+      - name: country_iso
+        dtype: string
+        required: true
+        regex: "^[A-Z]{2}$"
+        normalize: upper
+        hints: ["Country ISO", "Country", "ISO2"]
+        examples: ["CA"]
+
+      - name: tax_code
+        dtype: string
+        required: true
+        normalize: upper
+        hints: ["Tax Code", "Short Code", "Abbreviation"]
+        examples: ["GST","PST","QST","RST","HST"]
+
+      - name: name
+        dtype: string
+        required: true
+        normalize: collapse_whitespace
+        hints: ["Tax Name","Tax Type"]
+        examples: ["GST Tax","PST Tax","QST Tax"]
+
+      - name: cascading_flag
+        dtype: boolean
+        required: true
+        hints: ["Cascading","Compound","Applied on top of other taxes"]
+        examples: [true, false]
+
+      - name: included_in_price
+        dtype: boolean
+        required: true
+        hints: ["Included in Price","Embedded tax","Tax included?"]
+        examples: [true, false]
+
+      - name: description
+        dtype: string
+        required: false
+        normalize: collapse_whitespace
+        hints: ["Description","Details","Notes"]
+        examples: ["Canadian GST Tax","Canadian HST Tax"]
+
+    constraints:
+      - name: country_iso_format
+        expression: "country_iso ~ '^[A-Z]{2}$'"
+      - name: tax_code_uppercase
+        expression: "tax_code = upper(tax_code)"
+      - name: name_non_empty
+        expression: "length(trim(name)) > 0"
+
+    ingestion_gate:
+      binary_rules:
+        - required_fields_present
+        - no_constraint_violations
+      quality_thresholds:
+        coverage_min: 1.0
+        mean_confidence_min: 0.95
+
+    evidence_rules:
+      min_spans_per_field: 1
+      require_page_numbers: true
+
+
+  province_tax_rates_stg:
+    description: Province-level tax rates by tax type, including ad valorem (%) or fixed levy (staging)
+    primary_key: [country_iso, province_code, tax_code]
+    key_fields: [province_code, tax_code]
+    # Filter chunks to only process Canadian tax rates file
+    source_path_filter: ["canadian_tax_rates_by_province.csv"]
+    fields:
+      - name: country_iso
+        dtype: string
+        required: true
+        regex: "^[A-Z]{2}$"
+        normalize: upper
+        hints: ["Country ISO", "Country Code", "ISO2"]
+        examples: ["CA"]
+
+      - name: province_code
+        dtype: string
+        required: true
+        enum: [AB,BC,MB,NB,NL,NS,NT,NU,ON,PE,QC,SK,YT]
+        normalize: upper
+        hints: ["Province Code", "Subdivision Code"]
+        examples: ["AB","BC","SK","QC","ON"]
+
+      - name: tax_code
+        dtype: string
+        required: true
+        enum: [GST,PST,QST,RST,HST]   # scoped for CA; extend per country as needed
+        normalize: upper
+        hints: ["Tax Code","GST/PST/HST/QST/RST"]
+
+      - name: rate_percent
+        dtype: number
+        units: percent
+        required: false
+        range: [0,100]
+        normalize: percent_to_fraction     # 5.000 -> 0.05
+        hints: ["Tax Rate","Percentage rate"]
+        examples: ["5.000","7.000","13.000","15.000","9.975"]
+
+      - name: fixed_amount
+        dtype: number
+        units: currency
+        required: false
+        range: [0,1000000]
+        hints: ["Fixed levy","Flat tax amount"]
+        examples: ["0"]
+
+      - name: currency_code
+        dtype: string
+        required: true
+        regex: "^[A-Z]{3}$"
+        normalize: upper
+        hints: ["Currency","ISO 4217 code"]
+        examples: ["CAD"]
+
+    constraints:
+      - name: country_iso_format
+        expression: "country_iso ~ '^[A-Z]{2}$'"
+
+      - name: province_code_allowed_for_country
+        when: "country_iso = 'CA'"
+        expression: "province_code in ('AB','BC','MB','NB','NL','NS','NT','NU','ON','PE','QC','SK','YT')"
+
+      - name: tax_code_enum_for_ca
+        when: "country_iso = 'CA'"
+        expression: "tax_code in ('GST','PST','QST','RST','HST')"
+
+      - name: currency_code_ca_is_cad
+        when: "country_iso = 'CA'"
+        expression: "currency_code = 'CAD'"
+
+      - name: valid_rate_or_fixed
+        expression: "(coalesce(rate_percent,0) > 0) or (coalesce(fixed_amount,0) > 0)"
+
+      - name: mutually_exclusive_rate_and_fixed
+        expression: "not (coalesce(rate_percent,0) > 0 and coalesce(fixed_amount,0) > 0)"
+
+      - name: non_negative_fixed
+        expression: "coalesce(fixed_amount,0) >= 0"
+
+    ingestion_gate:
+      binary_rules:
+        - required_fields_present
+        - no_constraint_violations
+      quality_thresholds:
+        coverage_min: 1.0
+        mean_confidence_min: 0.95
+
+    evidence_rules:
+      min_spans_per_field: 1
+      require_page_numbers: true
+
+  treatments_stg:
+    description: Destination-country tariff treatments/programs with legal basis, preference type, and quota flag (staging)
+    primary_key: [destination_country_iso, treatment_code]
+    key_fields: [treatment_code]
+    # Filter chunks to only process treatment codes file
+    source_path_filter: ["treatment_codes.csv"]
+    fields:
+      - name: destination_country_iso
+        dtype: string
+        required: true
+        regex: "^[A-Z]{2}$"
+        normalize: upper
+        hints: ["Destination Country ISO2","Country","ISO"]
+        examples: ["CA"]
+
+      - name: treatment_code
+        dtype: string
+        required: true
+        regex: "^[A-Z]{2,5}$"
+        normalize: upper
+        hints: ["Treatment Code","Tariff Treatment Code","Program code"]
+        examples: ["MFN","CPTPT","UKT","NZT","KRT","CIAT","UAT","JT","PAT","CCCT","AUT","IT","NT","MXT"]
+
+      - name: name
+        dtype: string
+        required: true
+        normalize: collapse_whitespace
+        hints: ["Treatment Name","Tariff program name"]
+        examples: ["Most-Favoured-Nation","CPTPP Tariff","United Kingdom Tariff","Korea Tariff"]
+
+      - name: legal_basis
+        dtype: string
+        required: false
+        normalize: collapse_whitespace
+        hints: ["Agreement","Act/Regulation","FTA name","Legal citation"]
+        examples: ["World Trade Organization Agreement","Canada-Korea Free Trade Agreement"]
+
+      - name: preference_type
+        dtype: string
+        required: false
+        enum: [Preferential, Standard, Other]
+        normalize: title
+        hints: ["Preference type","Tariff class"]
+        examples: ["Preferential","Standard"]
+
+      - name: quota_flag
+        dtype: boolean
+        required: true
+        hints: ["Quota applicable?","Subject to quota"]
+        examples: [false]
+
+    constraints:
+      - name: country_iso_format
+        expression: "destination_country_iso ~ '^[A-Z]{2}$'"
+
+      - name: treatment_code_uppercase
+        expression: "treatment_code = upper(treatment_code)"
+
+      - name: name_non_empty
+        expression: "length(trim(name)) > 0"
+
+      - name: preference_type_enum
+        expression: "preference_type is null or preference_type in ('Preferential','Standard','Other')"
+
+    ingestion_gate:
+      binary_rules:
+        - required_fields_present
+        - no_constraint_violations
+      quality_thresholds:
+        coverage_min: 1.0
+        mean_confidence_min: 0.95
+
+    evidence_rules:
+      min_spans_per_field: 1
+      require_page_numbers: true
+
+  origin_groups_stg:
+    description: Defines origin groups linked to tariff treatments and countries (staging)
+    primary_key: [treatment_code, origin_group_code]
+    key_fields: [treatment_code, origin_group_code]
+    # Filter chunks to only process treatment codes file
+    source_path_filter: ["treatment_codes.csv"]
+    fields:
+      - name: treatment_code
+        dtype: string
+        required: true
+        normalize: upper
+        hints: ["Treatment Code","Tariff Treatment","Program code"]
+        examples: ["MFN","CPTPT","UKT","NZT","KRT","CIAT"]
+
+      - name: origin_group_code
+        dtype: string
+        required: true
+        normalize: upper
+        hints: ["Origin Group Code","Origin group identifier"]
+        examples: ["MFN","CPTPT","UKT","NZT","KRT","CIAT"]
+
+      - name: origin_iso2
+        dtype: string
+        required: false
+        regex: "^[A-Z]{2}$"
+        normalize: upper
+        hints: ["Origin Country ISO2","Country Code","ISO code of origin"]
+        examples: ["US","MX","CN"]
+        notes: "Blank when group is regional or abstract (e.g., LIST, CPTPT)"
+
+      - name: name
+        dtype: string
+        required: true
+        normalize: collapse_whitespace
+        hints: ["Origin Group Name","Description"]
+        examples: ["MFN Origin Group","UKT Origin Group","NZT Origin Group"]
+
+    constraints:
+      - name: treatment_origin_match
+        expression: "origin_group_code = treatment_code"
+        notes: "By design in staging, origin group codes mirror treatment codes"
+      - name: valid_origin_iso2
+        expression: "origin_iso2 is null or origin_iso2 ~ '^[A-Z]{2}$'"
+      - name: non_empty_name
+        expression: "length(trim(name)) > 0"
+
+    ingestion_gate:
+      binary_rules:
+        - required_fields_present
+        - no_constraint_violations
+      quality_thresholds:
+        coverage_min: 1.0
+        mean_confidence_min: 0.95
+
+    evidence_rules:
+      min_spans_per_field: 1
+      require_page_numbers: true
+
+  country_origin_groups_stg:
+    description: Maps an origin country (ISO2, country name, or placeholder) to an origin_group_code used in tariff/treatment logic (staging)
+    primary_key: [country_iso, origin_group_code]
+    key_fields: [country_iso, origin_group_code]
+    # Filter chunks to only process treatment codes file
+    source_path_filter: ["treatment_codes.csv"]
+    fields:
+      - name: country_iso
+        dtype: string
+        required: true
+        # Staging contains ISO2 (e.g., AF), full names (e.g., AMERICAN SAMOA), and placeholders (e.g., LIST)
+        regex: "^[A-Z][A-Z \\-]{1,63}$"
+        normalize: upper
+        hints: ["Origin Country", "ISO2 or Country Name or Placeholder"]
+        examples: ["AF","AL","DZ","AMERICAN SAMOA","ANGUILLA","ARUBA","ASCENSION ISLAND","LIST"]
+
+      - name: origin_group_code
+        dtype: string
+        required: true
+        regex: "^[A-Z][A-Z \\-]{1,49}$"
+        normalize: upper
+        hints: ["Origin Group Code","Grouping used by treatments"]
+        examples: ["MFN","CCCT","CPTPT","CEUT","GENERAL TARIFF","OF","COUNTRIES","AND","LIST"]
+
+    constraints:
+      - name: country_present
+        expression: "length(trim(country_iso)) > 0"
+
+      - name: origin_group_present
+        expression: "length(trim(origin_group_code)) > 0"
+
+      # Prefer ISO2 where possible; allow names/placeholders in staging
+      - name: country_iso_format_loose
+        expression: "country_iso ~ '^[A-Z]{2}$' or country_iso ~ '^[A-Z][A-Z \\-]{1,63}$'"
+
+      # Optional cross-table checks (enable if your validator supports lookups):
+      # - Ensure ISO2 codes exist in countries_stg
+      - name: country_iso_exists_when_iso2
+        when: "country_iso ~ '^[A-Z]{2}$'"
+        expression: "exists(select 1 from countries_stg where iso2 = country_iso)"
+        notes: "If country_iso looks like ISO2, it must exist in countries_stg."
+
+      # - Ensure origin_group_code exists in origin_groups_stg
+      - name: origin_group_code_exists
+        expression: "exists(select 1 from origin_groups_stg where origin_group_code = country_origin_groups_stg.origin_group_code)"
+        notes: "Validates the group against origin_groups_stg."
+
+    ingestion_gate:
+      binary_rules:
+        - required_fields_present
+        - no_constraint_violations
+      quality_thresholds:
+        coverage_min: 1.0
+        mean_confidence_min: 0.95
+
+    evidence_rules:
+      min_spans_per_field: 1
+      require_page_numbers: true
+
+  treatment_eligibilities_stg:
+    description: Mapping of destination countries to eligible treatments and origin groups, with certification and notes (staging)
+    primary_key: [destination_country_iso, origin_group_code, treatment_code]
+    key_fields: [origin_group_code, treatment_code]
+    # Filter chunks to only process treatment codes file
+    source_path_filter: ["treatment_codes.csv"]
+    fields:
+      - name: destination_country_iso
+        dtype: string
+        required: true
+        regex: "^[A-Z]{2}$"
+        normalize: upper
+        hints: ["Destination Country","Country ISO2"]
+        examples: ["CA"]
+
+      - name: origin_group_code
+        dtype: string
+        required: true
+        normalize: upper
+        hints: ["Origin Group Code","Group Code","Origin group identifier"]
+        examples: ["LIST","UKT","NZT","JT","KRT","CIAT"]
+
+      - name: treatment_code
+        dtype: string
+        required: true
+        normalize: upper
+        hints: ["Treatment Code","Tariff Treatment","Program code"]
+        examples: ["MFN","CPTPT","UKT","NZT","KRT","CIAT"]
+
+      - name: cert_required
+        dtype: boolean
+        required: true
+        hints: ["Certificate required?","Proof of origin required"]
+        examples: [true, false]
+
+      - name: notes
+        dtype: string
+        required: false
+        normalize: collapse_whitespace
+        hints: ["Notes","Eligibility notes","Remarks"]
+        examples: ["Treatment eligibility for MFN","Treatment eligibility for UKT"]
+
+    constraints:
+      - name: country_iso_format
+        expression: "destination_country_iso ~ '^[A-Z]{2}$'"
+      - name: origin_group_code_upper
+        expression: "origin_group_code = upper(origin_group_code)"
+      - name: treatment_code_upper
+        expression: "treatment_code = upper(treatment_code)"
+      - name: cert_required_boolean
+        expression: "cert_required in (true,false)"
+      - name: notes_optional
+        expression: "notes is null or length(trim(notes)) > 0"
+
+    ingestion_gate:
+      binary_rules:
+        - required_fields_present
+        - no_constraint_violations
+      quality_thresholds:
+        coverage_min: 1.0
+        mean_confidence_min: 0.95
+
+    evidence_rules:
+      min_spans_per_field: 1
+      require_page_numbers: true
+
+  duty_rates_stg:
+    description: Duty rates by HS code, treatment, and origin group including ad valorem % and/or specific duties (staging)
+    primary_key: [destination_country_iso, origin_group_code, hs_code, treatment_code]
+    key_fields: [hs_code, treatment_code, origin_group_code]
+    # Filter chunks to only process TPHS file
+    source_path_filter: ["TPHS.csv"]
+    fields:
+      - name: destination_country_iso
+        dtype: string
+        required: true
+        regex: "^[A-Z]{2}$"
+        normalize: upper
+        hints: ["Destination Country","Country ISO2"]
+        examples: ["CA"]
+
+      - name: origin_group_code
+        dtype: string
+        required: true
+        normalize: upper
+        hints: ["Origin Group Code","Origin group identifier"]
+        examples: ["MFN","AUT","UST","MXT","CIAT","CT"]
+
+      - name: hs_code
+        dtype: string
+        required: true
+        regex: "^[0-9]{6,10}$"
+        normalize: strip_leading_zeros
+        hints: ["HS Code","Tariff Code"]
+        examples: ["0101210000"]
+
+      - name: treatment_code
+        dtype: string
+        required: true
+        normalize: upper
+        hints: ["Treatment Code","Tariff Treatment","Program code"]
+        examples: ["MFN","General Tariff","AUT","UST","MXT"]
+
+      - name: ad_valorem_percent
+        dtype: number
+        units: percent
+        required: false
+        range: [0,100]
+        hints: ["Ad Valorem Duty","Duty %","Percentage rate"]
+        examples: ["0.0","35.0"]
+
+      - name: specific_min
+        dtype: number
+        units: currency
+        required: false
+        range: [0,1000000]
+        hints: ["Specific duty minimum","Min duty amount"]
+        examples: ["0.0000"]
+
+      - name: specific_max
+        dtype: number
+        units: currency
+        required: false
+        range: [0,1000000]
+        hints: ["Specific duty maximum","Max duty amount"]
+        examples: ["0.0000"]
+
+      - name: currency_code
+        dtype: string
+        required: false
+        regex: "^[A-Z]{3}$"
+        normalize: upper
+        hints: ["Currency","ISO 4217 code"]
+        examples: ["CAD"]
+
+      - name: unit_of_measure
+        dtype: string
+        required: false
+        hints: ["Unit of Measure","Basis unit (kg, L, piece)"]
+        examples: ["kg","unit"]
+
+    constraints:
+      - name: hs_code_format
+        expression: "length(hs_code) between 6 and 10 and hs_code ~ '^[0-9]+$'"
+
+      - name: ad_valorem_range
+        expression: "ad_valorem_percent is null or (0 <= ad_valorem_percent <= 100)"
+
+      - name: specific_min_max_logic
+        expression: "(specific_min is null or specific_max is null) or (specific_min <= specific_max)"
+
+      - name: currency_code_valid
+        expression: "currency_code is null or currency_code ~ '^[A-Z]{3}$'"
+
+      - name: unit_required_if_specific
+        when: "coalesce(specific_min,0) > 0 or coalesce(specific_max,0) > 0"
+        expression: "unit_of_measure is not null"
+
+    ingestion_gate:
+      binary_rules:
+        - required_fields_present
+        - no_constraint_violations
+      quality_thresholds:
+        coverage_min: 1.0
+        mean_confidence_min: 0.95
+
+    evidence_rules:
+      min_spans_per_field: 1
+      require_page_numbers: true
+
+  origin_bands_stg:
+    description: Origin bands used for de-minimis and duty logic (staging)
+    primary_key: [band_code]
+    key_fields: [band_code]
+    # Filter chunks to only process CUSMA notice file
+    source_path_filter: ["canadian_deminimis_thresholds_cusma_notice.html"]
+    fields:
+      - name: band_code
+        dtype: string
+        required: true
+        regex: "^[A-Z0-9_\\-]{2,20}$"
+        normalize: upper
+        hints: ["Origin band code","Band","Group"]
+        examples: ["CUSMA","ROW"]
+
+      - name: name
+        dtype: string
+        required: true
+        normalize: collapse_whitespace
+        hints: ["Origin band name","Display name"]
+        examples: ["Canada-United States-Mexico Agreement","Rest of World"]
+
+      - name: notes
+        dtype: string
+        required: false
+        normalize: collapse_whitespace
+        hints: ["Notes","Definition","Scope"]
+        examples:
+          - "Goods imported from the United States or Mexico."
+          - "Goods imported from any country other than the United States or Mexico."
+
+    constraints:
+      - name: band_code_uppercase
+        expression: "band_code = upper(band_code)"
+      - name: band_name_non_empty
+        expression: "length(trim(name)) > 0"
+
+    ingestion_gate:
+      binary_rules:
+        - required_fields_present
+        - no_constraint_violations
+      quality_thresholds:
+        coverage_min: 1.0
+        mean_confidence_min: 0.95
+
+    evidence_rules:
+      min_spans_per_field: 1
+      require_page_numbers: true
+
+  deminimis_rules_stg:
+    description: De-minimis thresholds by destination and origin band, defining duty/tax applicability (staging)
+    primary_key: [destination_country_iso, origin_band_code, value_min]
+    key_fields: [destination_country_iso, origin_band_code]
+    # Filter chunks to only process CUSMA notice file
+    source_path_filter: ["canadian_deminimis_thresholds_cusma_notice.html"]
+    fields:
+      - name: destination_country_iso
+        dtype: string
+        required: true
+        regex: "^[A-Z]{2}$"
+        normalize: upper
+        hints: ["Destination Country ISO2","Country"]
+        examples: ["CA"]
+
+      - name: origin_band_code
+        dtype: string
+        required: true
+        normalize: upper
+        hints: ["Origin Band Code","Band Code"]
+        examples: ["ROW","CUSMA"]
+
+      - name: value_min
+        dtype: number
+        units: currency
+        required: true
+        range: [0, 1000000]
+        hints: ["Minimum Value","From (CAD)"]
+        examples: ["0.00","20.01","40.01","150.01"]
+
+      - name: value_max
+        dtype: number
+        units: currency
+        required: false
+        range: [0, 1000000]
+        hints: ["Maximum Value","To (CAD)"]
+        examples: ["20.00","150.00","0"]   # 0 used in data to indicate "no upper limit"
+
+      - name: currency_code
+        dtype: string
+        required: true
+        regex: "^[A-Z]{3}$"
+        normalize: upper
+        hints: ["Currency","ISO 4217 code"]
+        examples: ["CAD"]
+
+      - name: duty_applicable
+        dtype: boolean
+        required: true
+        hints: ["Duty applies?","Customs duty applicable"]
+        examples: [true,false]
+
+      - name: tax_applicable
+        dtype: boolean
+        required: true
+        hints: ["Tax applies?","Taxes applicable"]
+        examples: [true,false]
+
+      - name: note
+        dtype: string
+        required: false
+        normalize: collapse_whitespace
+        hints: ["Notes","Description","Rule details"]
+        examples:
+          - "Goods with a value for duty of CAD$20.00 or less will have duties and taxes waived."
+          - "Goods with a value for duty CAD$150.01 or greater will be subject to duties and taxes."
+
+    constraints:
+      - name: valid_band_range
+        expression: "value_min < coalesce(nullif(value_max,0), 9e18)"
+        notes: "0 in value_max is treated as 'no upper limit'."
+
+      - name: non_overlapping_bands
+        type: no_overlap
+        group_by: [destination_country_iso, origin_band_code]
+        on: [value_min, value_max]
+
+      - name: currency_code_valid
+        expression: "currency_code ~ '^[A-Z]{3}$'"
+
+    ingestion_gate:
+      binary_rules:
+        - required_fields_present
+        - no_constraint_violations
+      quality_thresholds:
+        coverage_min: 1.0
+        mean_confidence_min: 0.95
+
+    evidence_rules:
+      min_spans_per_field: 1
+      require_page_numbers: true
