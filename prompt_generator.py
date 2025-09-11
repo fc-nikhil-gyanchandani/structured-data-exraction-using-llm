@@ -62,7 +62,20 @@ spec.json format
 import os
 import json
 import argparse
+import logging
+import sys
 from typing import Any, Dict, List, Optional
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler('prompt_generator.log', encoding='utf-8')
+    ]
+)
+logger = logging.getLogger(__name__)
 
 # OpenAI SDK
 try:
@@ -352,13 +365,13 @@ def main():
         ap.error("Provide --spec-file or use --demo")
 
     if args.dry_run:
-        print("=== META-PROMPT THAT WOULD BE SENT TO OPENAI ===\n")
+        logger.info("=== META-PROMPT THAT WOULD BE SENT TO OPENAI ===")
         messages = build_meta_messages(spec)
         for i, msg in enumerate(messages):
-            print(f"--- {msg['role'].upper()} MESSAGE {i+1} ---")
-            print(msg['content'])
-            print()
-        print("=== END META-PROMPT ===")
+            logger.info(f"--- {msg['role'].upper()} MESSAGE {i+1} ---")
+            logger.info(msg['content'])
+            logger.info("")
+        logger.info("=== END META-PROMPT ===")
         return
 
     pack = generate_prompt_pack(spec, model=args.model)
@@ -366,9 +379,9 @@ def main():
     if args.out:
         with open(args.out, "w", encoding="utf-8") as f:
             json.dump(pack, f, indent=2, ensure_ascii=False)
-        print(f"Wrote prompt pack → {args.out}")
+        logger.info(f"Wrote prompt pack → {args.out}")
     else:
-        print(json.dumps(pack, indent=2, ensure_ascii=False))
+        logger.info(json.dumps(pack, indent=2, ensure_ascii=False))
 
 
 if __name__ == "__main__":

@@ -1,0 +1,113 @@
+# Prompt for Model: provinces_stg
+==================================================
+
+## System Prompt
+--------------------
+You are a schema-driven extraction model. Extract ONLY from provided chunks. 
+Never invent or use outside knowledge. If a field is not explicitly supported 
+by evidence, set that field to null (but include the field key). Output strict JSON only 
+(no markdown, no commentary).
+
+Quality contracts:
+- No hallucinations.
+- Obey the provided JSON Schema exactly.
+- For every non-null field include relevant evidence objects with the shape 
+{chunk_id, snippet} where snippet is a ≤120 char direct quote. Include as many 
+evidence objects as needed to support the extraction, prioritizing the most 
+relevant and specific evidence.
+- If constraints appear violated, still return the best structured result and add a note in top-level 'notes'.
+
+Normalization:
+- Currency codes uppercase ISO-4217 (e.g., 'CAD'); numeric values are numbers (strip $ and commas).
+- Range edges: if text says 'up to and including X', the next band starts at X + 0.01 (minor unit).
+- Open upper bounds: use null.
+- Sort records by value_min ascending.
+
+
+Banding rules:
+- Identify ALL threshold tiers. Do not merge tiers with different duty/tax flags.
+- One record per tier.
+- If scope (e.g., courier vs postal) is mixed, include tiers for the primary scope and explain in 'notes' if you include both.
+
+Evidence guidelines:
+- Include ALL relevant evidence that supports your extraction, not just 1-3 pieces
+- For complex extractions, include evidence from multiple chunks to show comprehensive analysis
+- Prioritize the most specific and direct evidence, but don't artificially limit the count
+- If information is scattered across many chunks, include evidence from all relevant chunks
+
+DOMAIN AGNOSTIC RULES:
+- Extract ONLY information explicitly stated or clearly implied in the provided chunks
+- Never use external knowledge beyond what's in the chunks
+- If the data dictionary specifies a business perspective, extract from that viewpoint consistently
+- Create one record for each distinct entity/rule/threshold/item as defined by the primary key
+
+FIELD EXTRACTION:
+- For each field, follow the extraction_rules provided in the data dictionary
+- Use the hints array to identify field values in natural language text
+- Apply validation_patterns if specified
+- When text is ambiguous, prefer the interpretation that aligns with the business_rules
+
+RECORD CREATION LOGIC:
+- Follow the record_grouping_logic from data dictionary to determine record boundaries
+- Ensure primary key uniqueness - each record must have a unique combination of primary key fields
+- If business_rules specify relationships, maintain those constraints across records
+
+CONFIDENCE AND EVIDENCE:
+- Higher confidence (0.95) for explicitly stated facts
+- Medium confidence (0.80) for clearly implied information
+- Lower confidence (0.55) for information requiring interpretation
+- Always provide evidence snippets that directly support each extracted value
+
+HANDLING AMBIGUITY:
+- When multiple interpretations are possible, choose the one most consistent with the document_context
+- If extraction_focus specifies priorities, follow those guidelines
+- When in doubt, prefer null values with explanatory notes rather than guessing
+
+ADAPTIVE BANDING LOGIC:
+IF the data dictionary indicates threshold/range-based data:
+- Identify ALL distinct thresholds mentioned in chunks
+- Create separate records for each range with different rule applications
+- Ensure no gaps in coverage unless explicitly stated
+- Handle open-ended ranges as specified in field extraction_rules
+
+IF the data dictionary indicates categorical/enumerated data:
+- Extract each distinct category/item as a separate record
+- Group related items according to the record_grouping_logic
+
+IF the data dictionary indicates relational data:
+- Maintain parent-child or hierarchical relationships as specified
+- Ensure referential integrity across related records
+
+QUALITY ASSURANCE:
+- Validate each record against the business_rules from data dictionary
+- Check that all required fields are populated or explicitly marked null
+- Ensure extracted values match validation_patterns where specified
+- Verify that the extraction_perspective is consistently applied
+- Flag any conflicts between chunks in the notes field
+
+## User Prompt
+--------------------
+{
+  "data_dictionary": {"model": "provinces_stg", "description": "Province/state-level administrative divisions linked to countries (staging)", "domain_context": "Landed Cost Calculation", "extraction_perspective": "Senior Customs Agent: Extracting province/state information to determine applicable regional taxes and regulations for imported goods within a specific country.", "primary_key": ["country_iso", "province_code"], "key_fields": ["province_code", "country_iso"], "fields": {"country_iso": {"type": "string", "description": "", "hints": ["Country", "Country ISO", "ISO2"], "required": true, "extraction_rules": ["Field must match exactly two uppercase characters.", "Must be a valid ISO 3166-1 alpha-2 country code."], "validation_patterns": "^[A-Z]{2}$", "examples": ["CA"], "normalize": "upper", "enum": [], "range": [], "units": "", "notes": ""}, "province_code": {"type": "string", "description": "", "hints": ["Province Code", "State Code", "Subdivision code"], "required": true, "extraction_rules": ["Field must match exactly two uppercase characters.", "Must be a valid province/state code for the given country."], "validation_patterns": "^[A-Z]{2}$", "examples": ["AB", "MB", "ON", "QC", "NB", "BC", "SK", "NL", "NS", "PE"], "normalize": "upper", "enum": [], "range": [], "units": "", "notes": ""}, "name": {"type": "string", "description": "", "hints": ["Province Name", "State Name", "Subdivision"], "required": true, "extraction_rules": ["Extract the complete province/state name.", "Remove any leading or trailing whitespace.", "Ensure it aligns with the extracted province_code and country_iso."], "validation_patterns": "", "examples": ["Alberta", "Manitoba", "Ontario", "Quebec", "New Brunswick"], "normalize": "collapse_whitespace", "enum": [], "range": [], "units": "", "notes": ""}}, "business_rules": ["country_iso must be a valid ISO 3166-1 alpha-2 code. Ensures correct country context.", "province_code must be a valid code for the given country_iso. Ensures correct regional tax application.", "name must not be empty. Provides the province/state name for tax calculation and validation."], "record_grouping_logic": "Each unique combination of country_iso and province_code represents one distinct record.", "document_context": {}, "extraction_focus": [], "source_path_filter": []},
+  "json_schema_for_response": {"type": "object", "properties": {"records": {"type": "array", "items": {"type": "object", "properties": {"country_iso": {"type": "string", "pattern": "^[A-Z]{2}$"}, "province_code": {"type": "string", "pattern": "^[A-Z]{2}$"}, "name": {"type": "string"}}, "required": ["country_iso", "province_code", "name"]}}, "notes": {"type": "string"}}, "required": ["records"]},
+  "row_json_schema_hint": {},
+  "defaults": {"country": "CA", "country_context": "Canada (CBSA Harmonized Tariff)", "currency": "CAD", "evidence_required": 1, "mean_confidence_min": 0.8, "source_path_filter": null},
+  "all_chunks": [{"chunk_id": "canadian_tax_rates_by_province.csv:rows-0-12-390f1e68", "text": "[{\"Province / Territory\": \"Alberta\", \"Province_Code\": \"AB\", \"GST_Rate\": \"5%\", \"PST_Rate\": \"0%\", \"QST_Rate\": \"0%\", \"RST_Rate\": \"0%\", \"HST_Rate\": \"0%\"}, {\"Province / Territory\": \"British Columbia\", \"Province_Code\": \"BC\", \"GST_Rate\": \"5%\", \"PST_Rate\": \"7%\", \"QST_Rate\": \"0%\", \"RST_Rate\": \"0%\", \"HST_Rate\": \"0%\"}, {\"Province / Territory\": \"Saskatchewan\", \"Province_Code\": \"SK\", \"GST_Rate\": \"5%\", \"PST_Rate\": \"6%\", \"QST_Rate\": \"0%\", \"RST_Rate\": \"0%\", \"HST_Rate\": \"0%\"}, {\"Province / Territory\": \"Manitoba\", \"Province_Code\": \"MB\", \"GST_Rate\": \"5%\", \"PST_Rate\": \"0%\", \"QST_Rate\": \"0%\", \"RST_Rate\": \"7%\", \"HST_Rate\": \"0%\"}, {\"Province / Territory\": \"Ontario\", \"Province_Code\": \"ON\", \"GST_Rate\": \"0%\", \"PST_Rate\": \"0%\", \"QST_Rate\": \"0%\", \"RST_Rate\": \"0%\", \"HST_Rate\": \"13%\"}, {\"Province / Territory\": \"Quebec\", \"Province_Code\": \"QC\", \"GST_Rate\": \"5%\", \"PST_Rate\": \"0%\", \"QST_Rate\": \"9.975%\", \"RST_Rate\": \"0%\", \"HST_Rate\": \"0%\"}, {\"Province / Territory\": \"New Brunswick\", \"Province_Code\": \"NB\", \"GST_Rate\": \"0%\", \"PST_Rate\": \"0%\", \"QST_Rate\": \"0%\", \"RST_Rate\": \"0%\", \"HST_Rate\": \"15%\"}, {\"Province / Territory\": \"Newfoundland & Labrador\", \"Province_Code\": \"NL\", \"GST_Rate\": \"0%\", \"PST_Rate\": \"0%\", \"QST_Rate\": \"0%\", \"RST_Rate\": \"0%\", \"HST_Rate\": \"15%\"}, {\"Province / Territory\": \"Nova Scotia\", \"Province_Code\": \"NS\", \"GST_Rate\": \"0%\", \"PST_Rate\": \"0%\", \"QST_Rate\": \"0%\", \"RST_Rate\": \"0%\", \"HST_Rate\": \"14%\"}, {\"Province / Territory\": \"Prince Edward Island\", \"Province_Code\": \"PE\", \"GST_Rate\": \"0%\", \"PST_Rate\": \"0%\", \"QST_Rate\": \"0%\", \"RST_Rate\": \"0%\", \"HST_Rate\": \"15%\"}, {\"Province / Territory\": \"Yukon\", \"Province_Code\": \"YT\", \"GST_Rate\": \"5%\", \"PST_Rate\": \"0%\", \"QST_Rate\": \"0%\", \"RST_Rate\": \"0%\", \"HST_Rate\": \"0%\"}, {\"Province / Territory\": \"Northwest Territories\", \"Province_Code\": \"NT\", \"GST_Rate\": \"5%\", \"PST_Rate\": \"0%\", \"QST_Rate\": \"0%\", \"RST_Rate\": \"0%\", \"HST_Rate\": \"0%\"}, {\"Province / Territory\": \"Nunavut\", \"Province_Code\": \"NU\", \"GST_Rate\": \"5%\", \"PST_Rate\": \"0%\", \"QST_Rate\": \"0%\", \"RST_Rate\": \"0%\", \"HST_Rate\": \"0%\"}]", "metadata": {"columns": ["Province / Territory", "Province_Code", "GST_Rate", "PST_Rate", "QST_Rate", "RST_Rate", "HST_Rate"], "row_range": [0, 12], "tokens_est": 506, "fingerprint": "390f1e68", "overlap_with_prev": 0, "created_at": "2025-09-11T11:37:42.049700Z"}}],
+  "instructions": ["Analyze ALL provided chunks in this batch.", "Include comprehensive evidence snippets."],
+  "_human_friendly_overview": {
+    "model": "provinces_stg",
+    "description": "Province/state-level administrative divisions linked to countries (staging)",
+    "primary_key": ["country_iso", "province_code"],
+    "fields_readable": "- `country_iso` (string) [REQUIRED] | Hints: Country, Country ISO, ISO2 | Rules: Field must match exactly two uppercase characters.; Must be a valid ISO 3166-1 alpha-2 country code. | Examples: CA | Constraints: regex: ^[A-Z]{2}$; normalize: upper\n- `province_code` (string) [REQUIRED] | Hints: Province Code, State Code, Subdivision code | Rules: Field must match exactly two uppercase characters.; Must be a valid province/state code for the given country. | Examples: AB, MB, ON | Constraints: regex: ^[A-Z]{2}$; normalize: upper\n- `name` (string) [REQUIRED] | Hints: Province Name, State Name, Subdivision | Rules: Extract the complete province/state name.; Remove any leading or trailing whitespace.; Ensure it aligns with the extracted province_code and country_iso. | Examples: Alberta, Manitoba, Ontario | Constraints: normalize: collapse_whitespace",
+    "constraints": [],
+    "rules_extra": [],
+    "examples": []
+  }
+}
+
+## Model Information
+--------------------
+Description: Province/state-level administrative divisions linked to countries (staging)
+Primary Key: country_iso, province_code
+Field Count: 3
+Required Fields: 3

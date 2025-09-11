@@ -1,6 +1,7 @@
 # validator_llm.py
 from __future__ import annotations
 import json, argparse, re, sys
+import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from collections import defaultdict
@@ -16,6 +17,17 @@ from data_dict_compiler import (
     ModelSpec, FieldSpec,
 )
 from prompt_builder import PromptBuilder
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler('validator.log', encoding='utf-8')
+    ]
+)
+logger = logging.getLogger(__name__)
 
 # --------------- PYDANTIC MODELS FOR INSTRUCTOR VALIDATION ---------------
 
@@ -186,29 +198,41 @@ def build_validation_messages(
     defaults: Dict[str, Any]
 ) -> List[Dict[str,str]]:
     """
-    Build validation messages using ValidationPromptBuilder.
+    Build validation messages using PromptBuilder.
     """
-    # Convert ModelSpec to data dictionary format for ValidationPromptBuilder
+    # Convert ModelSpec to data dictionary format for PromptBuilder
     data_dict = {
         "models": {
             spec.name: {
                 "description": getattr(spec, 'description', 'N/A'),
                 "primary_key": getattr(spec, 'primary_key', []),
+                "key_fields": getattr(spec, 'key_fields', []),
+                "domain_context": getattr(spec, 'domain_context', ''),
+                "extraction_perspective": getattr(spec, 'extraction_perspective', ''),
                 "fields": [
                     {
                         "name": f.name,
                         "dtype": f.dtype,
+                        "description": getattr(f, 'description', ''),
                         "required": f.required,
                         "hints": f.hints or [],
+                        "extraction_rules": f.extraction_rules or [],
+                        "examples": f.examples or [],
+                        "normalize": f.normalize or "",
+                        "regex": f.regex or "",
                         "enum": f.enum or [],
                         "range": f.range or [],
-                        "regex": f.regex or "",
-                        "normalize": f.normalize or ""
+                        "units": f.units or "",
+                        "notes": f.notes or ""
                     }
                     for f in spec.fields
                 ],
-                "constraints": getattr(spec, 'constraints', []),
-                "evidence_rules": getattr(spec, 'evidence_rules', {})
+                "business_rules": getattr(spec, 'business_rules', []),
+                "record_grouping_logic": getattr(spec, 'record_grouping_logic', ''),
+                "document_context": getattr(spec, 'document_context', {}),
+                "extraction_focus": getattr(spec, 'extraction_focus', []),
+                "source_path_filter": getattr(spec, 'source_path_filter', []),
+                "constraints": getattr(spec, 'constraints', [])
             }
         },
         "defaults": defaults or {}
@@ -243,11 +267,10 @@ def call_llm_validate_with_instructor(
 ) -> RecordValidation:
     """Validate records using Instructor with Pydantic models and automatic validation."""
     
-    print(f"\n>>> CALLING INSTRUCTOR FOR VALIDATION:")
-    print(f"   Model: {model_name}")
-    print(f"   Schema: {spec.name}")
-    print(f"   Fields to validate: {len(record)}")
-    sys.stdout.flush()
+    logger.info(f"CALLING INSTRUCTOR FOR VALIDATION:")
+    logger.info(f"   Model: {model_name}")
+    logger.info(f"   Schema: {spec.name}")
+    logger.info(f"   Fields to validate: {len(record)}")
     
     # Create Instructor client
     instructor_client = instructor.from_openai(client)
@@ -258,8 +281,7 @@ def call_llm_validate_with_instructor(
     # Use the existing messages as-is - they already contain all your prompts!
     all_messages = messages
     
-    print(f"   Number of messages: {len(all_messages)}")
-    sys.stdout.flush()
+    logger.info(f"   Number of messages: {len(all_messages)}")
     
     try:
         # Validate using Instructor with automatic validation and retries
@@ -271,16 +293,14 @@ def call_llm_validate_with_instructor(
             temperature=0.0
         )
         
-        print(f"   ✅ Instructor validation successful!")
-        print(f"   Overall result: {'PASS' if result.binary else 'FAIL'}")
-        print(f"   Fields validated: {len(result.fields)}")
-        sys.stdout.flush()
+        logger.info(f"   ✅ Instructor validation successful!")
+        logger.info(f"   Overall result: {'PASS' if result.binary else 'FAIL'}")
+        logger.info(f"   Fields validated: {len(result.fields)}")
         
         return result
         
     except Exception as e:
-        print(f"   ❌ Instructor validation failed: {e}")
-        sys.stdout.flush()
+        logger.error(f"   ❌ Instructor validation failed: {e}")
         raise
 
 def convert_instructor_validation_to_legacy(validation: RecordValidation) -> Dict[str, Any]:
@@ -319,34 +339,33 @@ def call_llm_validate(
     schema = build_validation_schema(spec)
     messages = build_validation_messages(spec, record, evid_pack, machine_checks, defaults)
     
-    # Print validation prompt and messages
-    print("\n" + "="*80)
-    print("VALIDATION PROMPT:")
-    print("="*80)
+    # Log validation prompt and messages
+    logger.info("="*80)
+    logger.info("VALIDATION PROMPT:")
+    logger.info("="*80)
     for i, msg in enumerate(messages):
-        print(f"Message {i+1} ({msg['role']}):")
-        print("-" * 60)
+        logger.info(f"Message {i+1} ({msg['role']}):")
+        logger.info("-" * 60)
         if msg['role'] == 'user' and isinstance(msg['content'], dict):
             # Pretty print JSON user message
             try:
                 user_data = json.loads(json.dumps(msg['content'])) if isinstance(msg['content'], dict) else msg['content']
-                print(json.dumps(user_data, indent=2, ensure_ascii=False))
+                logger.info(json.dumps(user_data, indent=2, ensure_ascii=False))
             except:
-                print(msg['content'])
+                logger.info(msg['content'])
         else:
-            print(msg['content'])
-        print("-" * 60)
-    print("="*80)
-    print("END OF VALIDATION PROMPT")
-    print("="*80 + "\n")
+            logger.info(msg['content'])
+        logger.info("-" * 60)
+    logger.info("="*80)
+    logger.info("END OF VALIDATION PROMPT")
+    logger.info("="*80)
     
-    print(f"\n>>> CALLING OPENAI API FOR VALIDATION:")
-    print(f"   Model: {model_name}")
-    print(f"   Temperature: 0")
-    print(f"   Response Format: JSON Schema (strict)")
-    print(f"   Schema Name: {spec.name}_per_record_validation")
-    print(f"   Number of messages: {len(messages)}")
-    sys.stdout.flush()  # Ensure output appears immediately
+    logger.info(f"CALLING OPENAI API FOR VALIDATION:")
+    logger.info(f"   Model: {model_name}")
+    logger.info(f"   Temperature: 0")
+    logger.info(f"   Response Format: JSON Schema (strict)")
+    logger.info(f"   Schema Name: {spec.name}_per_record_validation")
+    logger.info(f"   Number of messages: {len(messages)}")
     
     resp = client.chat.completions.create(
         model=model_name,
@@ -363,18 +382,18 @@ def call_llm_validate(
     )
     content = resp.choices[0].message.content or "{}"
     
-    # Print the LLM validation response
-    print("\n" + "="*80)
-    print("VALIDATION RESPONSE RECEIVED:")
-    print("="*80)
+    # Log the LLM validation response
+    logger.info("="*80)
+    logger.info("VALIDATION RESPONSE RECEIVED:")
+    logger.info("="*80)
     try:
         response_data = json.loads(content)
-        print(json.dumps(response_data, indent=2, ensure_ascii=False))
+        logger.info(json.dumps(response_data, indent=2, ensure_ascii=False))
     except:
-        print(content)
-    print("="*80)
-    print("END OF VALIDATION RESPONSE")
-    print("="*80 + "\n")
+        logger.info(content)
+    logger.info("="*80)
+    logger.info("END OF VALIDATION RESPONSE")
+    logger.info("="*80)
     
     try:
         return json.loads(content)
@@ -457,18 +476,18 @@ def validate_records(
         if use_instructor:
             try:
                 # Use Instructor for validation
-                print(f"\n[INSTRUCTOR] Validating record {idx+1} with Instructor...")
+                logger.info(f"[INSTRUCTOR] Validating record {idx+1} with Instructor...")
                 instructor_validation = call_llm_validate_with_instructor(
                     client, llm_model, spec, row, evid_pack, machine, defaults
                 )
                 
                 # Convert to legacy format
                 llm_out = convert_instructor_validation_to_legacy(instructor_validation)
-                print(f"[SUCCESS] Instructor validated record {idx+1}")
+                logger.info(f"[SUCCESS] Instructor validated record {idx+1}")
                 
             except Exception as e:
-                print(f"[ERROR] Instructor validation failed for record {idx+1}: {e}")
-                print("[FALLBACK] Using legacy validation...")
+                logger.error(f"[ERROR] Instructor validation failed for record {idx+1}: {e}")
+                logger.info("[FALLBACK] Using legacy validation...")
                 
                 # Fallback to legacy validation
                 llm_out = call_llm_validate(
@@ -496,7 +515,7 @@ def validate_records(
             "used_chunk_ids": chunk_ids
         }
         results.append(result_item)
-        print(f"[{idx}] {'PASS' if final_binary==1 else 'FAIL'}  — source={file_path}  chunks={len(chunk_ids)}")
+        logger.info(f"[{idx}] {'PASS' if final_binary==1 else 'FAIL'}  — source={file_path}  chunks={len(chunk_ids)}")
 
     # Write per-record results
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
@@ -530,8 +549,8 @@ def validate_records(
     with open(out_summary, "w", encoding="utf-8") as f:
         json.dump(summary, f, ensure_ascii=False, indent=2)
 
-    print("\n== SUMMARY ==")
-    print(json.dumps(summary, indent=2, ensure_ascii=False))
+    logger.info("== SUMMARY ==")
+    logger.info(json.dumps(summary, indent=2, ensure_ascii=False))
 
 # --------------- CLI ---------------
 

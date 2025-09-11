@@ -11,10 +11,10 @@ defaults:
 models:
   countries_stg:
     description: Master list of countries with ISO 3166-1 alpha-2 codes (staging)
+    domain_context: Landed Cost Calculation
+    extraction_perspective: "Senior Customs Agent: Extracting country information to determine applicable trade regulations, restrictions, and required documentation for imported goods."
     primary_key: [iso2]
     key_fields: [iso2]
-    # Filter chunks to only process specific source files
-    source_path_filter: ["countries-pays-eng.pdf", "countriesandcurrencies.csv"]
     fields:
       - name: iso2
         dtype: string
@@ -23,6 +23,10 @@ models:
         normalize: upper
         hints: ["ISO 3166-1 alpha-2", "Country Code", "ISO2", "Alpha-2"]
         examples: ["AF","AD","AO","AG","AR","AM","AU","AT","AL","DZ"]
+        extraction_rules:
+          - "The field must match exactly two uppercase characters"
+          - "If similar codes appear, prioritize those listed with 'Country Code' or 'ISO2' headings"
+          - "Extract only valid ISO2 codes that exist in the official ISO registry"
 
       - name: name
         dtype: string
@@ -30,12 +34,17 @@ models:
         normalize: collapse_whitespace
         hints: ["Country", "Country Name", "Name"]
         examples: ["Afghanistan","Andorra","Angola","Antigua and Barbuda","Argentina"]
+        extraction_rules:
+          - "Extract the complete, official country name"
+          - "Remove any leading or trailing whitespace during extraction"
+          - "Account for variations in naming conventions (e.g., 'The Republic of...')"
+          - "Ensure it aligns with the extracted ISO2 code"
 
-    constraints:
-      - name: iso2_format
-        expression: "iso2 ~ '^[A-Z]{2}$'"
-      - name: non_empty_name
-        expression: "length(trim(name)) > 0"
+    business_rules:
+      - "iso2 must be a valid ISO 3166-1 alpha-2 code. Represents a valid country for landed cost calculations."
+      - "name must not be empty. Ensures valid country name for landed cost calculation"
+
+    record_grouping_logic: "Each unique iso2 code represents one distinct record."
 
     ingestion_gate:
       binary_rules:
@@ -52,10 +61,10 @@ models:
 
   currencies_stg:
     description: Master list of currencies with ISO 4217 codes (staging)
+    domain_context: Landed Cost Calculation
+    extraction_perspective: "Senior Customs Agent: Extracting currency information to determine applicable currency and conversion rates for duty and tax calculations."
     primary_key: [code]
     key_fields: [code]
-    # Filter chunks to only process countries and currencies file
-    source_path_filter: ["countriesandcurrencies.csv"]
     fields:
       - name: code
         dtype: string
@@ -64,9 +73,10 @@ models:
         normalize: upper
         hints: ["ISO 4217 code", "Currency Code", "Code"]
         examples: ["AFN","ALL","DZD","EUR","AOA","XCD","ARS","AMD","AUD","AZN"]
-        # enum_source:
-        #   type: athena
-        #   sql: SELECT DISTINCT code FROM gold.currencies
+        extraction_rules:
+          - "The field must match exactly three uppercase characters"
+          - "Prioritize codes listed with 'Currency Code' or 'ISO 4217 code' headings"
+          - "Extract only valid ISO 4217 currency codes"
 
       - name: name
         dtype: string
@@ -74,12 +84,16 @@ models:
         normalize: collapse_whitespace
         hints: ["Currency", "Currency Name", "Name"]
         examples: ["Afghan Afghani","Albanian Lek","Algerian Dinar","Euro","Angolan Kwanza"]
+        extraction_rules:
+          - "Extract the complete, official currency name"
+          - "Remove any leading or trailing whitespace during extraction"
+          - "Ensure alignment with the extracted currency code"
 
-    constraints:
-      - name: code_format
-        expression: "code ~ '^[A-Z]{3}$'"
-      - name: non_empty_name
-        expression: "length(trim(name)) > 0"
+    business_rules:
+      - "code must be a valid ISO 4217 currency code. Ensures correct currency for landed cost calculations."
+      - "name must not be empty. Provides the currency name for reporting and validation"
+
+    record_grouping_logic: "Each unique currency code represents one distinct record."
 
     ingestion_gate:
       binary_rules:
@@ -95,10 +109,10 @@ models:
 
   provinces_stg:
     description: Province/state-level administrative divisions linked to countries (staging)
+    domain_context: Landed Cost Calculation
+    extraction_perspective: "Senior Customs Agent: Extracting province/state information to determine applicable regional taxes and regulations for imported goods within a specific country."
     primary_key: [country_iso, province_code]
     key_fields: [province_code, country_iso]
-    # Filter chunks to only process Canadian tax rates file
-    source_path_filter: ["canadian_tax_rates_by_province.csv"]
     fields:
       - name: country_iso
         dtype: string
@@ -107,6 +121,9 @@ models:
         normalize: upper
         hints: ["Country", "Country ISO", "ISO2"]
         examples: ["CA"]
+        extraction_rules:
+          - "Field must match exactly two uppercase characters."
+          - "Must be a valid ISO 3166-1 alpha-2 country code."
 
       - name: province_code
         dtype: string
@@ -115,6 +132,9 @@ models:
         normalize: upper
         hints: ["Province Code", "State Code", "Subdivision code"]
         examples: ["AB","MB","ON","QC","NB","BC","SK","NL","NS","PE"]
+        extraction_rules:
+          - "Field must match exactly two uppercase characters."
+          - "Must be a valid province/state code for the given country."
 
       - name: name
         dtype: string
@@ -122,14 +142,17 @@ models:
         normalize: collapse_whitespace
         hints: ["Province Name","State Name","Subdivision"]
         examples: ["Alberta","Manitoba","Ontario","Quebec","New Brunswick"]
+        extraction_rules:
+          - "Extract the complete province/state name."
+          - "Remove any leading or trailing whitespace."
+          - "Ensure it aligns with the extracted province_code and country_iso."
 
-    constraints:
-      - name: country_iso_format
-        expression: "country_iso ~ '^[A-Z]{2}$'"
-      - name: province_code_format
-        expression: "province_code ~ '^[A-Z]{2}$'"
-      - name: non_empty_name
-        expression: "length(trim(name)) > 0"
+    business_rules:
+      - "country_iso must be a valid ISO 3166-1 alpha-2 code. Ensures correct country context."
+      - "province_code must be a valid code for the given country_iso. Ensures correct regional tax application."
+      - "name must not be empty. Provides the province/state name for tax calculation and validation."
+
+    record_grouping_logic: "Each unique combination of country_iso and province_code represents one distinct record."
 
     ingestion_gate:
       binary_rules:
@@ -145,17 +168,22 @@ models:
 
   hs_codes_stg:
     description: Harmonized System (HS) codes with short descriptions (staging)
+    domain_context: Landed Cost Calculation
+    extraction_perspective: "Senior Customs Agent: Extracting HS codes to determine applicable tariff rates, trade regulations, and import/export restrictions for specific goods."
     primary_key: [hs_code]
     key_fields: [hs_code]
-    # Filter chunks to only process TPHS file
-    source_path_filter: ["TPHS.csv"]
     fields:
       - name: hs_code
         dtype: string
         required: true
         regex: "^[0-9]{6,10}$"
+        normalize: strip_leading_zeros
         hints: ["HS Code", "Tariff Code", "Customs Code", "Harmonized Code"]
         examples: ["0101210000","0102210090","0102290010","0102290090","0101290010"]
+        extraction_rules:
+          - "Field must be a numeric string of 6 to 10 digits."
+          - "If leading zeros are present, strip them."
+          - "Verify against official HS code nomenclature if possible."
 
       - name: description
         dtype: string
@@ -163,12 +191,16 @@ models:
         normalize: collapse_whitespace
         hints: ["Description","Goods Description","HS Description"]
         examples: ["Pure-bred breeding animals","Other","Dairy","For slaughter","For racing"]
+        extraction_rules:
+          - "Extract the complete description of the goods associated with the HS code."
+          - "Remove any leading or trailing whitespace."
+          - "Ensure it aligns with the extracted HS code."
 
-    constraints:
-      - name: hs_code_format
-        expression: "length(hs_code) between 6 and 10 and hs_code ~ '^[0-9]+$'"
-      - name: non_empty_description
-        expression: "length(trim(description)) > 0"
+    business_rules:
+      - "hs_code must be a numeric string of 6 to 10 digits. Determines the correct tariff classification."
+      - "description must not be empty. Provides the description of the goods for customs declaration and validation."
+
+    record_grouping_logic: "Each unique hs_code represents one distinct record."
 
     ingestion_gate:
       binary_rules:
@@ -182,13 +214,12 @@ models:
       min_spans_per_field: 1
       require_page_numbers: true
 
-
   tax_types_stg:
     description: Tax types applicable per country with flags for cascading and inclusion in price (staging)
+    domain_context: Landed Cost Calculation
+    extraction_perspective: "Senior Customs Agent: Extracting tax type information to determine applicable taxes (e.g., GST, PST, VAT) on imported goods based on the destination country and regional regulations."
     primary_key: [country_iso, tax_code]
     key_fields: [country_iso, tax_code]
-    # Filter chunks to only process Canadian tax rates file
-    source_path_filter: ["canadian_tax_rates_by_province.csv"]
     fields:
       - name: country_iso
         dtype: string
@@ -197,6 +228,9 @@ models:
         normalize: upper
         hints: ["Country ISO", "Country", "ISO2"]
         examples: ["CA"]
+        extraction_rules:
+          - "Field must match exactly two uppercase characters."
+          - "Must be a valid ISO 3166-1 alpha-2 country code."
 
       - name: tax_code
         dtype: string
@@ -204,6 +238,9 @@ models:
         normalize: upper
         hints: ["Tax Code", "Short Code", "Abbreviation"]
         examples: ["GST","PST","QST","RST","HST"]
+        extraction_rules:
+          - "Field should be in uppercase."
+          - "Must be a valid tax code for the given country."
 
       - name: name
         dtype: string
@@ -211,18 +248,28 @@ models:
         normalize: collapse_whitespace
         hints: ["Tax Name","Tax Type"]
         examples: ["GST Tax","PST Tax","QST Tax"]
+        extraction_rules:
+          - "Extract the complete tax name."
+          - "Remove any leading or trailing whitespace."
+          - "Ensure it aligns with the extracted tax code and country_iso."
 
       - name: cascading_flag
         dtype: boolean
         required: true
         hints: ["Cascading","Compound","Applied on top of other taxes"]
         examples: [true, false]
+        extraction_rules:
+          - "Interpret values like 'Yes', 'True' as true; 'No', 'False' as false."
+          - "Indicates if the tax is applied on top of other taxes."
 
       - name: included_in_price
         dtype: boolean
         required: true
         hints: ["Included in Price","Embedded tax","Tax included?"]
         examples: [true, false]
+        extraction_rules:
+          - "Interpret values like 'Yes', 'True' as true; 'No', 'False' as false."
+          - "Indicates if the tax is already included in the price of the goods."
 
       - name: description
         dtype: string
@@ -230,14 +277,16 @@ models:
         normalize: collapse_whitespace
         hints: ["Description","Details","Notes"]
         examples: ["Canadian GST Tax","Canadian HST Tax"]
+        extraction_rules:
+          - "Extract additional details about the tax type, if available."
+          - "Remove any leading or trailing whitespace."
 
-    constraints:
-      - name: country_iso_format
-        expression: "country_iso ~ '^[A-Z]{2}$'"
-      - name: tax_code_uppercase
-        expression: "tax_code = upper(tax_code)"
-      - name: name_non_empty
-        expression: "length(trim(name)) > 0"
+    business_rules:
+      - "country_iso must be a valid ISO 3166-1 alpha-2 code. Ensures correct country context for tax calculation."
+      - "tax_code must be uppercase. Enforces consistency."
+      - "name must not be empty. Provides the tax name for accurate calculation."
+
+    record_grouping_logic: "Each unique combination of country_iso and tax_code represents one distinct tax type."
 
     ingestion_gate:
       binary_rules:
@@ -254,10 +303,10 @@ models:
 
   province_tax_rates_stg:
     description: Province-level tax rates by tax type, including ad valorem (%) or fixed levy (staging)
+    domain_context: Landed Cost Calculation
+    extraction_perspective: "Senior Customs Agent: Extracting province-level tax rates to accurately calculate regional taxes on imported goods, considering ad valorem percentages or fixed levies."
     primary_key: [country_iso, province_code, tax_code]
     key_fields: [province_code, tax_code]
-    # Filter chunks to only process Canadian tax rates file
-    source_path_filter: ["canadian_tax_rates_by_province.csv"]
     fields:
       - name: country_iso
         dtype: string
@@ -266,6 +315,9 @@ models:
         normalize: upper
         hints: ["Country ISO", "Country Code", "ISO2"]
         examples: ["CA"]
+        extraction_rules:
+          - "Field must match exactly two uppercase characters."
+          - "Must be a valid ISO 3166-1 alpha-2 country code."
 
       - name: province_code
         dtype: string
@@ -274,6 +326,10 @@ models:
         normalize: upper
         hints: ["Province Code", "Subdivision Code"]
         examples: ["AB","BC","SK","QC","ON"]
+        extraction_rules:
+          - "Field must match exactly two uppercase characters."
+          - "Must be a valid province/state code for the given country."
+          - "If an enum is provided, values must be selected from the enum."
 
       - name: tax_code
         dtype: string
@@ -281,6 +337,10 @@ models:
         enum: [GST,PST,QST,RST,HST]   # scoped for CA; extend per country as needed
         normalize: upper
         hints: ["Tax Code","GST/PST/HST/QST/RST"]
+        extraction_rules:
+          - "Field should be in uppercase."
+          - "Must be a valid tax code for the given country and province."
+          - "If an enum is provided, values must be selected from the enum."
 
       - name: rate_percent
         dtype: number
@@ -290,6 +350,9 @@ models:
         normalize: percent_to_fraction     # 5.000 -> 0.05
         hints: ["Tax Rate","Percentage rate"]
         examples: ["5.000","7.000","13.000","15.000","9.975"]
+        extraction_rules:
+          - "Value must be a number between 0 and 100."
+          - "If the value is expressed as a percentage (e.g., 5.000), convert it to a fraction (0.05)."
 
       - name: fixed_amount
         dtype: number
@@ -298,6 +361,9 @@ models:
         range: [0,1000000]
         hints: ["Fixed levy","Flat tax amount"]
         examples: ["0"]
+        extraction_rules:
+          - "Value must be a number between 0 and 1,000,000."
+          - "Represents a fixed tax amount."
 
       - name: currency_code
         dtype: string
@@ -306,31 +372,19 @@ models:
         normalize: upper
         hints: ["Currency","ISO 4217 code"]
         examples: ["CAD"]
+        extraction_rules:
+          - "Field must match exactly three uppercase characters."
+          - "Must be a valid ISO 4217 currency code."
 
-    constraints:
-      - name: country_iso_format
-        expression: "country_iso ~ '^[A-Z]{2}$'"
+    business_rules:
+      - "country_iso must be a valid ISO 3166-1 alpha-2 code. Ensures correct country context for tax calculation."
+      - "province_code must be a valid code for the given country_iso. Ensures correct regional tax application."
+      - "tax_code must be a valid tax code for the given country and province. Ensures correct tax type is applied"
+      - "currency_code_ca_is_cad. When country_iso = 'CA', currency_code must be 'CAD'."
+      - "Either rate_percent or fixed_amount must be greater than 0, not both."
+      - "fixed_amount cannot be negative."
 
-      - name: province_code_allowed_for_country
-        when: "country_iso = 'CA'"
-        expression: "province_code in ('AB','BC','MB','NB','NL','NS','NT','NU','ON','PE','QC','SK','YT')"
-
-      - name: tax_code_enum_for_ca
-        when: "country_iso = 'CA'"
-        expression: "tax_code in ('GST','PST','QST','RST','HST')"
-
-      - name: currency_code_ca_is_cad
-        when: "country_iso = 'CA'"
-        expression: "currency_code = 'CAD'"
-
-      - name: valid_rate_or_fixed
-        expression: "(coalesce(rate_percent,0) > 0) or (coalesce(fixed_amount,0) > 0)"
-
-      - name: mutually_exclusive_rate_and_fixed
-        expression: "not (coalesce(rate_percent,0) > 0 and coalesce(fixed_amount,0) > 0)"
-
-      - name: non_negative_fixed
-        expression: "coalesce(fixed_amount,0) >= 0"
+    record_grouping_logic: "Each unique combination of country_iso, province_code, and tax_code represents one distinct tax rate."
 
     ingestion_gate:
       binary_rules:
@@ -346,10 +400,10 @@ models:
 
   treatments_stg:
     description: Destination-country tariff treatments/programs with legal basis, preference type, and quota flag (staging)
+    domain_context: Landed Cost Calculation
+    extraction_perspective: "Senior Customs Agent: Extracting tariff treatment information to determine applicable preferential duties or trade programs based on the origin and destination of goods."
     primary_key: [destination_country_iso, treatment_code]
     key_fields: [treatment_code]
-    # Filter chunks to only process treatment codes file
-    source_path_filter: ["treatment_codes.csv"]
     fields:
       - name: destination_country_iso
         dtype: string
@@ -358,6 +412,9 @@ models:
         normalize: upper
         hints: ["Destination Country ISO2","Country","ISO"]
         examples: ["CA"]
+        extraction_rules:
+          - "Field must match exactly two uppercase characters."
+          - "Must be a valid ISO 3166-1 alpha-2 country code."
 
       - name: treatment_code
         dtype: string
@@ -366,6 +423,9 @@ models:
         normalize: upper
         hints: ["Treatment Code","Tariff Treatment Code","Program code"]
         examples: ["MFN","CPTPT","UKT","NZT","KRT","CIAT","UAT","JT","PAT","CCCT","AUT","IT","NT","MXT"]
+        extraction_rules:
+          - "Field must be 2 to 5 uppercase characters."
+          - "Must be a valid tariff treatment code."
 
       - name: name
         dtype: string
@@ -373,6 +433,10 @@ models:
         normalize: collapse_whitespace
         hints: ["Treatment Name","Tariff program name"]
         examples: ["Most-Favoured-Nation","CPTPP Tariff","United Kingdom Tariff","Korea Tariff"]
+        extraction_rules:
+          - "Extract the complete name of the tariff treatment."
+          - "Remove any leading or trailing whitespace."
+          - "Ensure it aligns with the extracted treatment_code."
 
       - name: legal_basis
         dtype: string
@@ -380,6 +444,9 @@ models:
         normalize: collapse_whitespace
         hints: ["Agreement","Act/Regulation","FTA name","Legal citation"]
         examples: ["World Trade Organization Agreement","Canada-Korea Free Trade Agreement"]
+        extraction_rules:
+          - "Extract the legal basis or agreement for the tariff treatment, if available."
+          - "Remove any leading or trailing whitespace."
 
       - name: preference_type
         dtype: string
@@ -388,25 +455,26 @@ models:
         normalize: title
         hints: ["Preference type","Tariff class"]
         examples: ["Preferential","Standard"]
+        extraction_rules:
+          - "Value must be one of: Preferential, Standard, or Other."
+          - "Normalize to Title Case."
 
       - name: quota_flag
         dtype: boolean
         required: true
         hints: ["Quota applicable?","Subject to quota"]
         examples: [false]
+        extraction_rules:
+          - "Interpret values like 'Yes', 'True' as true; 'No', 'False' as false."
+          - "Indicates whether the tariff treatment is subject to a quota."
 
-    constraints:
-      - name: country_iso_format
-        expression: "destination_country_iso ~ '^[A-Z]{2}$'"
+    business_rules:
+      - "destination_country_iso must be a valid ISO 3166-1 alpha-2 code. Ensures correct destination for tariff treatment application."
+      - "treatment_code must be uppercase. Enforces consistency."
+      - "name must not be empty. Provides the tariff treatment name for accurate calculation."
+      - "preference_type, if not null must be equal to Preferential, Standard or Other"
 
-      - name: treatment_code_uppercase
-        expression: "treatment_code = upper(treatment_code)"
-
-      - name: name_non_empty
-        expression: "length(trim(name)) > 0"
-
-      - name: preference_type_enum
-        expression: "preference_type is null or preference_type in ('Preferential','Standard','Other')"
+    record_grouping_logic: "Each unique combination of destination_country_iso and treatment_code represents one distinct tariff treatment."
 
     ingestion_gate:
       binary_rules:
@@ -422,10 +490,10 @@ models:
 
   origin_groups_stg:
     description: Defines origin groups linked to tariff treatments and countries (staging)
+    domain_context: Landed Cost Calculation
+    extraction_perspective: "Senior Customs Agent: Extracting origin group information to determine applicable tariff treatments based on the country or region of origin for imported goods."
     primary_key: [treatment_code, origin_group_code]
     key_fields: [treatment_code, origin_group_code]
-    # Filter chunks to only process treatment codes file
-    source_path_filter: ["treatment_codes.csv"]
     fields:
       - name: treatment_code
         dtype: string
@@ -433,6 +501,9 @@ models:
         normalize: upper
         hints: ["Treatment Code","Tariff Treatment","Program code"]
         examples: ["MFN","CPTPT","UKT","NZT","KRT","CIAT"]
+        extraction_rules:
+          - "Field must be a valid treatment code from the treatments_stg model."
+          - "Must be in uppercase."
 
       - name: origin_group_code
         dtype: string
@@ -440,6 +511,10 @@ models:
         normalize: upper
         hints: ["Origin Group Code","Origin group identifier"]
         examples: ["MFN","CPTPT","UKT","NZT","KRT","CIAT"]
+        extraction_rules:
+          - "Field must be a valid origin group code."
+          - "Must be in uppercase."
+          - "Should match the treatment code in staging."
 
       - name: origin_iso2
         dtype: string
@@ -449,6 +524,10 @@ models:
         hints: ["Origin Country ISO2","Country Code","ISO code of origin"]
         examples: ["US","MX","CN"]
         notes: "Blank when group is regional or abstract (e.g., LIST, CPTPT)"
+        extraction_rules:
+          - "If present, must be a valid ISO 3166-1 alpha-2 country code."
+          - "Must be in uppercase."
+          - "Leave blank for regional or abstract origin groups."
 
       - name: name
         dtype: string
@@ -456,15 +535,17 @@ models:
         normalize: collapse_whitespace
         hints: ["Origin Group Name","Description"]
         examples: ["MFN Origin Group","UKT Origin Group","NZT Origin Group"]
+        extraction_rules:
+          - "Extract the complete name or description of the origin group."
+          - "Remove any leading or trailing whitespace."
+          - "Ensure it aligns with the extracted origin_group_code."
 
-    constraints:
-      - name: treatment_origin_match
-        expression: "origin_group_code = treatment_code"
-        notes: "By design in staging, origin group codes mirror treatment codes"
-      - name: valid_origin_iso2
-        expression: "origin_iso2 is null or origin_iso2 ~ '^[A-Z]{2}$'"
-      - name: non_empty_name
-        expression: "length(trim(name)) > 0"
+    business_rules:
+      - "origin_group_code must match the treatment_code in staging."
+      - "origin_iso2 must be a valid ISO 3166-1 alpha-2 code if present"
+      - "name must not be empty."
+
+    record_grouping_logic: "Each unique combination of treatment_code and origin_group_code represents one distinct origin group."
 
     ingestion_gate:
       binary_rules:
@@ -480,10 +561,10 @@ models:
 
   country_origin_groups_stg:
     description: Maps an origin country (ISO2, country name, or placeholder) to an origin_group_code used in tariff/treatment logic (staging)
+    domain_context: Landed Cost Calculation
+    extraction_perspective: "Senior Customs Agent: Mapping origin countries to specific origin groups for tariff/treatment logic. Handles ISO2 codes, full names, and placeholders."
     primary_key: [country_iso, origin_group_code]
     key_fields: [country_iso, origin_group_code]
-    # Filter chunks to only process treatment codes file
-    source_path_filter: ["treatment_codes.csv"]
     fields:
       - name: country_iso
         dtype: string
@@ -493,6 +574,9 @@ models:
         normalize: upper
         hints: ["Origin Country", "ISO2 or Country Name or Placeholder"]
         examples: ["AF","AL","DZ","AMERICAN SAMOA","ANGUILLA","ARUBA","ASCENSION ISLAND","LIST"]
+        extraction_rules:
+          - "Field can be an ISO2 code, a full country name, or a placeholder value."
+          - "Normalize to uppercase."
 
       - name: origin_group_code
         dtype: string
@@ -501,29 +585,17 @@ models:
         normalize: upper
         hints: ["Origin Group Code","Grouping used by treatments"]
         examples: ["MFN","CCCT","CPTPT","CEUT","GENERAL TARIFF","OF","COUNTRIES","AND","LIST"]
+        extraction_rules:
+          - "Field must be a valid origin group code."
+          - "Normalize to uppercase."
 
-    constraints:
-      - name: country_present
-        expression: "length(trim(country_iso)) > 0"
+    business_rules:
+      - "country_iso must not be empty."
+      - "origin_group_code must not be empty."
+      - "if country_iso is ISO2 code, it exists in countries_stg"
+      - "origin_group_code exists in origin_groups_stg."
 
-      - name: origin_group_present
-        expression: "length(trim(origin_group_code)) > 0"
-
-      # Prefer ISO2 where possible; allow names/placeholders in staging
-      - name: country_iso_format_loose
-        expression: "country_iso ~ '^[A-Z]{2}$' or country_iso ~ '^[A-Z][A-Z \\-]{1,63}$'"
-
-      # Optional cross-table checks (enable if your validator supports lookups):
-      # - Ensure ISO2 codes exist in countries_stg
-      - name: country_iso_exists_when_iso2
-        when: "country_iso ~ '^[A-Z]{2}$'"
-        expression: "exists(select 1 from countries_stg where iso2 = country_iso)"
-        notes: "If country_iso looks like ISO2, it must exist in countries_stg."
-
-      # - Ensure origin_group_code exists in origin_groups_stg
-      - name: origin_group_code_exists
-        expression: "exists(select 1 from origin_groups_stg where origin_group_code = country_origin_groups_stg.origin_group_code)"
-        notes: "Validates the group against origin_groups_stg."
+    record_grouping_logic: "Each unique combination of country_iso and origin_group_code represents one distinct mapping."
 
     ingestion_gate:
       binary_rules:
@@ -539,10 +611,10 @@ models:
 
   treatment_eligibilities_stg:
     description: Mapping of destination countries to eligible treatments and origin groups, with certification and notes (staging)
+    domain_context: Landed Cost Calculation
+    extraction_perspective: "Senior Customs Agent: Mapping destination countries to eligible treatments and origin groups, considering certification requirements and notes."
     primary_key: [destination_country_iso, origin_group_code, treatment_code]
     key_fields: [origin_group_code, treatment_code]
-    # Filter chunks to only process treatment codes file
-    source_path_filter: ["treatment_codes.csv"]
     fields:
       - name: destination_country_iso
         dtype: string
@@ -551,6 +623,9 @@ models:
         normalize: upper
         hints: ["Destination Country","Country ISO2"]
         examples: ["CA"]
+        extraction_rules:
+          - "Field must be a valid ISO 3166-1 alpha-2 country code."
+          - "Normalize to uppercase."
 
       - name: origin_group_code
         dtype: string
@@ -558,6 +633,9 @@ models:
         normalize: upper
         hints: ["Origin Group Code","Group Code","Origin group identifier"]
         examples: ["LIST","UKT","NZT","JT","KRT","CIAT"]
+        extraction_rules:
+          - "Field must be a valid origin group code."
+          - "Normalize to uppercase."
 
       - name: treatment_code
         dtype: string
@@ -565,12 +643,17 @@ models:
         normalize: upper
         hints: ["Treatment Code","Tariff Treatment","Program code"]
         examples: ["MFN","CPTPT","UKT","NZT","KRT","CIAT"]
+        extraction_rules:
+          - "Field must be a valid treatment code."
+          - "Normalize to uppercase."
 
       - name: cert_required
         dtype: boolean
         required: true
         hints: ["Certificate required?","Proof of origin required"]
         examples: [true, false]
+        extraction_rules:
+          - "Value must be a boolean value indicating whether a certificate of origin is required."
 
       - name: notes
         dtype: string
@@ -578,18 +661,18 @@ models:
         normalize: collapse_whitespace
         hints: ["Notes","Eligibility notes","Remarks"]
         examples: ["Treatment eligibility for MFN","Treatment eligibility for UKT"]
+        extraction_rules:
+          - "Extract any notes or remarks related to the treatment eligibility."
+          - "Remove leading/trailing whitespaces."
 
-    constraints:
-      - name: country_iso_format
-        expression: "destination_country_iso ~ '^[A-Z]{2}$'"
-      - name: origin_group_code_upper
-        expression: "origin_group_code = upper(origin_group_code)"
-      - name: treatment_code_upper
-        expression: "treatment_code = upper(treatment_code)"
-      - name: cert_required_boolean
-        expression: "cert_required in (true,false)"
-      - name: notes_optional
-        expression: "notes is null or length(trim(notes)) > 0"
+    business_rules:
+      - "destination_country_iso must be a valid ISO 3166-1 alpha-2 code."
+      - "origin_group_code must be in uppercase."
+      - "treatment_code must be in uppercase."
+      - "cert_required must be a boolean value."
+      - "notes can be optional"
+
+    record_grouping_logic: "Each unique combination of destination_country_iso, origin_group_code, and treatment_code represents one distinct treatment eligibility."
 
     ingestion_gate:
       binary_rules:
@@ -605,10 +688,10 @@ models:
 
   duty_rates_stg:
     description: Duty rates by HS code, treatment, and origin group including ad valorem % and/or specific duties (staging)
+    domain_context: Landed Cost Calculation
+    extraction_perspective: "Senior Customs Agent: Extracting duty rates based on HS code, treatment, and origin group, considering ad valorem percentages and/or specific duties."
     primary_key: [destination_country_iso, origin_group_code, hs_code, treatment_code]
     key_fields: [hs_code, treatment_code, origin_group_code]
-    # Filter chunks to only process TPHS file
-    source_path_filter: ["TPHS.csv"]
     fields:
       - name: destination_country_iso
         dtype: string
@@ -617,6 +700,9 @@ models:
         normalize: upper
         hints: ["Destination Country","Country ISO2"]
         examples: ["CA"]
+        extraction_rules:
+          - "Field must be a valid ISO 3166-1 alpha-2 country code."
+          - "Normalize to uppercase."
 
       - name: origin_group_code
         dtype: string
@@ -624,6 +710,9 @@ models:
         normalize: upper
         hints: ["Origin Group Code","Origin group identifier"]
         examples: ["MFN","AUT","UST","MXT","CIAT","CT"]
+        extraction_rules:
+          - "Field must be a valid origin group code."
+          - "Normalize to uppercase."
 
       - name: hs_code
         dtype: string
@@ -632,6 +721,9 @@ models:
         normalize: strip_leading_zeros
         hints: ["HS Code","Tariff Code"]
         examples: ["0101210000"]
+        extraction_rules:
+          - "Field must be a numeric string of 6 to 10 digits."
+          - "Strip leading zeros."
 
       - name: treatment_code
         dtype: string
@@ -639,6 +731,9 @@ models:
         normalize: upper
         hints: ["Treatment Code","Tariff Treatment","Program code"]
         examples: ["MFN","General Tariff","AUT","UST","MXT"]
+        extraction_rules:
+          - "Field must be a valid treatment code."
+          - "Normalize to uppercase."
 
       - name: ad_valorem_percent
         dtype: number
@@ -647,6 +742,9 @@ models:
         range: [0,100]
         hints: ["Ad Valorem Duty","Duty %","Percentage rate"]
         examples: ["0.0","35.0"]
+        extraction_rules:
+          - "If present, must be a number between 0 and 100."
+          - "Represents the ad valorem duty rate as a percentage."
 
       - name: specific_min
         dtype: number
@@ -655,6 +753,9 @@ models:
         range: [0,1000000]
         hints: ["Specific duty minimum","Min duty amount"]
         examples: ["0.0000"]
+        extraction_rules:
+          - "If present, must be a number between 0 and 1,000,000."
+          - "Represents the minimum specific duty amount."
 
       - name: specific_max
         dtype: number
@@ -663,6 +764,9 @@ models:
         range: [0,1000000]
         hints: ["Specific duty maximum","Max duty amount"]
         examples: ["0.0000"]
+        extraction_rules:
+          - "If present, must be a number between 0 and 1,000,000."
+          - "Represents the maximum specific duty amount."
 
       - name: currency_code
         dtype: string
@@ -671,29 +775,27 @@ models:
         normalize: upper
         hints: ["Currency","ISO 4217 code"]
         examples: ["CAD"]
+        extraction_rules:
+          - "If present, must be a valid ISO 4217 currency code."
+          - "Normalize to uppercase."
 
       - name: unit_of_measure
         dtype: string
         required: false
         hints: ["Unit of Measure","Basis unit (kg, L, piece)"]
         examples: ["kg","unit"]
+        extraction_rules:
+          - "If specific_min or specific_max are present, this field is required."
+          - "Indicates the unit of measure for the specific duty."
 
-    constraints:
-      - name: hs_code_format
-        expression: "length(hs_code) between 6 and 10 and hs_code ~ '^[0-9]+$'"
+    business_rules:
+      - "hs_code must be a numeric string of 6 to 10 digits. Determines tariff classification."
+      - "ad_valorem_percent must be between 0 and 100 if present."
+      - "specific_min must be less than or equal to specific_max if both are present."
+      - "currency_code must be a valid ISO 4217 currency code if present."
+      - "unit_of_measure is required if specific_min or specific_max are present."
 
-      - name: ad_valorem_range
-        expression: "ad_valorem_percent is null or (0 <= ad_valorem_percent <= 100)"
-
-      - name: specific_min_max_logic
-        expression: "(specific_min is null or specific_max is null) or (specific_min <= specific_max)"
-
-      - name: currency_code_valid
-        expression: "currency_code is null or currency_code ~ '^[A-Z]{3}$'"
-
-      - name: unit_required_if_specific
-        when: "coalesce(specific_min,0) > 0 or coalesce(specific_max,0) > 0"
-        expression: "unit_of_measure is not null"
+    record_grouping_logic: "Each unique combination of destination_country_iso, origin_group_code, hs_code, and treatment_code represents a distinct duty rate."
 
     ingestion_gate:
       binary_rules:
@@ -709,10 +811,10 @@ models:
 
   origin_bands_stg:
     description: Origin bands used for de-minimis and duty logic (staging)
+    domain_context: Landed Cost Calculation
+    extraction_perspective: "Senior Customs Agent: Extracting origin band information used for applying de minimis thresholds and duty logic based on the origin of goods."
     primary_key: [band_code]
     key_fields: [band_code]
-    # Filter chunks to only process CUSMA notice file
-    source_path_filter: ["canadian_deminimis_thresholds_cusma_notice.html"]
     fields:
       - name: band_code
         dtype: string
@@ -721,6 +823,9 @@ models:
         normalize: upper
         hints: ["Origin band code","Band","Group"]
         examples: ["CUSMA","ROW"]
+        extraction_rules:
+          - "Field must be an alphanumeric string of 2 to 20 characters."
+          - "Normalize to uppercase."
 
       - name: name
         dtype: string
@@ -728,6 +833,9 @@ models:
         normalize: collapse_whitespace
         hints: ["Origin band name","Display name"]
         examples: ["Canada-United States-Mexico Agreement","Rest of World"]
+        extraction_rules:
+          - "Extract the complete name of the origin band."
+          - "Remove any leading or trailing whitespace."
 
       - name: notes
         dtype: string
@@ -737,12 +845,15 @@ models:
         examples:
           - "Goods imported from the United States or Mexico."
           - "Goods imported from any country other than the United States or Mexico."
+        extraction_rules:
+          - "Extract any notes or details related to the origin band."
+          - "Remove any leading or trailing whitespace."
 
-    constraints:
-      - name: band_code_uppercase
-        expression: "band_code = upper(band_code)"
-      - name: band_name_non_empty
-        expression: "length(trim(name)) > 0"
+    business_rules:
+      - "band_code must be uppercase."
+      - "name must not be empty."
+
+    record_grouping_logic: "Each unique band_code represents one distinct origin band."
 
     ingestion_gate:
       binary_rules:
@@ -758,10 +869,10 @@ models:
 
   deminimis_rules_stg:
     description: De-minimis thresholds by destination and origin band, defining duty/tax applicability (staging)
+    domain_context: Landed Cost Calculation
+    extraction_perspective: "Senior Customs Agent: Extracting de minimis rules to determine duty and tax applicability based on the destination country, origin band, and value of goods."
     primary_key: [destination_country_iso, origin_band_code, value_min]
     key_fields: [destination_country_iso, origin_band_code]
-    # Filter chunks to only process CUSMA notice file
-    source_path_filter: ["canadian_deminimis_thresholds_cusma_notice.html"]
     fields:
       - name: destination_country_iso
         dtype: string
@@ -770,6 +881,9 @@ models:
         normalize: upper
         hints: ["Destination Country ISO2","Country"]
         examples: ["CA"]
+        extraction_rules:
+          - "Field must be a valid ISO 3166-1 alpha-2 country code."
+          - "Normalize to uppercase."
 
       - name: origin_band_code
         dtype: string
@@ -777,6 +891,9 @@ models:
         normalize: upper
         hints: ["Origin Band Code","Band Code"]
         examples: ["ROW","CUSMA"]
+        extraction_rules:
+          - "Field must be a valid origin band code from the origin_bands_stg model."
+          - "Normalize to uppercase."
 
       - name: value_min
         dtype: number
@@ -785,6 +902,9 @@ models:
         range: [0, 1000000]
         hints: ["Minimum Value","From (CAD)"]
         examples: ["0.00","20.01","40.01","150.01"]
+        extraction_rules:
+          - "Field must be a number between 0 and 1,000,000."
+          - "Represents the minimum value for the de minimis rule."
 
       - name: value_max
         dtype: number
@@ -793,6 +913,9 @@ models:
         range: [0, 1000000]
         hints: ["Maximum Value","To (CAD)"]
         examples: ["20.00","150.00","0"]   # 0 used in data to indicate "no upper limit"
+        extraction_rules:
+          - "Field can be a number between 0 and 1,000,000, or 0 to indicate no upper limit."
+          - "Represents the maximum value for the de minimis rule."
 
       - name: currency_code
         dtype: string
@@ -801,18 +924,25 @@ models:
         normalize: upper
         hints: ["Currency","ISO 4217 code"]
         examples: ["CAD"]
+        extraction_rules:
+          - "Field must be a valid ISO 4217 currency code."
+          - "Normalize to uppercase."
 
       - name: duty_applicable
         dtype: boolean
         required: true
         hints: ["Duty applies?","Customs duty applicable"]
         examples: [true,false]
+        extraction_rules:
+          - "Value must be a boolean value indicating whether duty is applicable."
 
       - name: tax_applicable
         dtype: boolean
         required: true
         hints: ["Tax applies?","Taxes applicable"]
         examples: [true,false]
+        extraction_rules:
+          - "Value must be a boolean value indicating whether tax is applicable."
 
       - name: note
         dtype: string
@@ -822,19 +952,17 @@ models:
         examples:
           - "Goods with a value for duty of CAD$20.00 or less will have duties and taxes waived."
           - "Goods with a value for duty CAD$150.01 or greater will be subject to duties and taxes."
+        extraction_rules:
+          - "Extract any notes or details related to the de minimis rule."
+          - "Remove leading/trailing whitespaces."
+          - "Identify all distinct value thresholds and create records for all implied ranges. Ensure there are no gaps in coverage. For values described as 'X or less', the next band starts at X+0.01. Create an additional record for values greater than a threshold, setting value_min appropriately and value_max to null."
 
-    constraints:
-      - name: valid_band_range
-        expression: "value_min < coalesce(nullif(value_max,0), 9e18)"
-        notes: "0 in value_max is treated as 'no upper limit'."
+    business_rules:
+      - "valid_band_range. value_min < coalesce(nullif(value_max,0), 9e18) , 0 in value_max is treated as 'no upper limit'."
+      - "currency_code must be a valid ISO 4217 currency code."
+      - "No overlapping bands should be present within same origin and destination country."
 
-      - name: non_overlapping_bands
-        type: no_overlap
-        group_by: [destination_country_iso, origin_band_code]
-        on: [value_min, value_max]
-
-      - name: currency_code_valid
-        expression: "currency_code ~ '^[A-Z]{3}$'"
+    record_grouping_logic: "Each unique combination of destination_country_iso, origin_band_code, and value_min represents one distinct de minimis rule."
 
     ingestion_gate:
       binary_rules:

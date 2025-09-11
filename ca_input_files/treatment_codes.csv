@@ -1,0 +1,34 @@
+treatment_code,treatment_name,category,description,legal_basis,preference_type,quota_flag
+MFN,Most-Favoured-Nation,Core,Standard tariff treatment for WTO members,World Trade Organization Agreement,Standard,false
+GPT,General Preferential Tariff,Core,Preferential tariff for developing countries,General Preferential Tariff Regulations,Preferential,false
+LDCT,Least-Developed Country Tariff,Core,Special tariff for least developed countries,Least-Developed Country Tariff Regulations,Preferential,false
+GT,General Tariff,Core,General tariff for non-preferential countries,General Tariff Regulations,Standard,false
+AUT,Australia Tariff,Preferential,Preferential tariff under CETA,Canada-Australia Trade Agreement,Preferential,false
+CCCT,Commonwealth Caribbean Countries Tariff,Preferential,Tariff for Caribbean Commonwealth countries,Commonwealth Caribbean Countries Tariff Regulations,Preferential,false
+CEUT,European Union Tariff,Preferential,Tariff under CETA agreement,Canada-European Union Comprehensive Economic and Trade Agreement,Preferential,false
+CIAT,Canada–Israel Agreement Tariff,Preferential,Tariff under Canada-Israel FTA,Canada-Israel Free Trade Agreement,Preferential,false
+COLT,Colombia Tariff,Preferential,Tariff under Canada-Colombia FTA,Canada-Colombia Free Trade Agreement,Preferential,false
+CPTPT,CPTPP Tariff,Preferential,Tariff under CPTPP agreement,Comprehensive and Progressive Agreement for Trans-Pacific Partnership,Preferential,false
+CRT,Costa Rica Tariff,Preferential,Tariff under Canada-Costa Rica FTA,Canada-Costa Rica Free Trade Agreement,Preferential,false
+CT,Chile Tariff,Preferential,Tariff under Canada-Chile FTA,Canada-Chile Free Trade Agreement,Preferential,false
+HNT,Honduras Tariff,Preferential,Tariff under Canada-Honduras FTA,Canada-Honduras Free Trade Agreement,Preferential,false
+IT,Iceland Tariff,Preferential,Tariff under Canada-EFTA FTA,Canada-European Free Trade Association Free Trade Agreement,Preferential,false
+JT,Jordan Tariff,Preferential,Tariff under Canada-Jordan FTA,Canada-Jordan Free Trade Agreement,Preferential,false
+KRT,Korea Tariff,Preferential,Tariff under Canada-Korea FTA,Canada-Korea Free Trade Agreement,Preferential,false
+MXT,Mexico Tariff,Preferential,Tariff under CUSMA,Canada-United States-Mexico Agreement,Preferential,false
+NT,Norway Tariff,Preferential,Tariff under Canada-EFTA FTA,Canada-European Free Trade Association Free Trade Agreement,Preferential,false
+NZT,New Zealand Tariff,Preferential,Tariff under CPTPP,Comprehensive and Progressive Agreement for Trans-Pacific Partnership,Preferential,false
+PAT,Panama Tariff,Preferential,Tariff under Canada-Panama FTA,Canada-Panama Free Trade Agreement,Preferential,false
+PT,Peru Tariff,Preferential,Tariff under Canada-Peru FTA,Canada-Peru Free Trade Agreement,Preferential,false
+SLT,Switzerland–Liechtenstein Tariff,Preferential,Tariff under Canada-EFTA FTA,Canada-European Free Trade Association Free Trade Agreement,Preferential,false
+UAT,Ukraine Tariff,Preferential,Tariff under Canada-Ukraine FTA,Canada-Ukraine Free Trade Agreement,Preferential,false
+UKT,United Kingdom Tariff,Preferential,Tariff under Canada-UK TCA,Canada-United Kingdom Trade Continuity Agreement,Preferential,false
+UST,United States Tariff,Preferential,Tariff under CUSMA,Canada-United States-Mexico Agreement,Preferential,false
+CETA,Canada-European Union Comprehensive Economic and Trade Agreement,Legacy,Legacy code for CETA,Canada-European Union Comprehensive Economic and Trade Agreement,Preferential,false
+CHFTA,Canada-Honduras Free Trade Agreement,Legacy,Legacy code for Honduras FTA,Canada-Honduras Free Trade Agreement,Preferential,false
+CKFTA,Canada-Korea Free Trade Agreement,Legacy,Legacy code for Korea FTA,Canada-Korea Free Trade Agreement,Preferential,false
+CPAFTA,Canada-Panama Free Trade Agreement,Legacy,Legacy code for Panama FTA,Canada-Panama Free Trade Agreement,Preferential,false
+CPPTA,Canada-Peru Free Trade Agreement,Legacy,Legacy code for Peru FTA,Canada-Peru Free Trade Agreement,Preferential,false
+CUT,Canada-Ukraine Trade Agreement,Legacy,Legacy code for Ukraine FTA,Canada-Ukraine Free Trade Agreement,Preferential,false
+CJFTA,Canada-Jordan Free Trade Agreement,Legacy,Legacy code for Jordan FTA,Canada-Jordan Free Trade Agreement,Preferential,false
+CFTA,Canada-Free Trade Agreement,Legacy,Generic legacy code,Various Free Trade Agreements,Preferential,false 

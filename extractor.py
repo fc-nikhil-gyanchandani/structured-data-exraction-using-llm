@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os, json, argparse, re, pathlib, sys
+import logging
 from pathlib import Path
 from typing import Any, Dict, List, Tuple, Optional
 from collections import defaultdict
@@ -19,6 +20,17 @@ from data_dict_compiler import (
     ModelSpec, FieldSpec
 )
 from prompt_builder import PromptBuilder
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler('extractor.log', encoding='utf-8')
+    ]
+)
+logger = logging.getLogger(__name__)
 
 # ---------------- PYDANTIC MODELS FOR INSTRUCTOR ----------------
 
@@ -81,13 +93,18 @@ def load_chunks(jsonl_path: str) -> List[Dict[str, Any]]:
                 chunks.append(json.loads(line))
     return chunks
 
-def group_by_file(chunks: List[Dict[str, Any]], spec: ModelSpec, override_source_filter: Optional[List[str]]=None) -> Dict[str, List[Dict[str, Any]]]:
+def group_by_file(chunks: List[Dict[str, Any]], spec: ModelSpec, override_source_filter: Optional[List[str]]=None, files_list: Optional[List[str]]=None) -> Dict[str, List[Dict[str, Any]]]:
     """
-    Group chunks by source_path. Apply model.source_path_filter unless override provided.
+    Group chunks by source_path. Apply files_list if provided, else override_source_filter, else no filter.
     """
     g: Dict[str, List[Dict[str, Any]]] = {}
-    # prefer explicit override; else spec filter; else no filter
-    source_filter = override_source_filter if (override_source_filter is not None) else getattr(spec, 'source_path_filter', None)
+    
+    # Priority: files_list > override_source_filter > no filter
+    source_filter = None
+    if files_list:
+        source_filter = files_list
+    elif override_source_filter is not None:
+        source_filter = override_source_filter
 
     for ch in chunks:
         sp = ch.get("source_path") or ""
@@ -280,19 +297,32 @@ def build_messages(
             spec.name: {
                 "description": getattr(spec, 'description', 'N/A'),
                 "primary_key": getattr(spec, 'primary_key', []),
+                "key_fields": getattr(spec, 'key_fields', []),
+                "domain_context": getattr(spec, 'domain_context', ''),
+                "extraction_perspective": getattr(spec, 'extraction_perspective', ''),
                 "fields": [
                     {
                         "name": f.name,
                         "dtype": f.dtype,
+                        "description": getattr(f, 'description', ''),
                         "required": f.required,
                         "hints": f.hints or [],
+                        "extraction_rules": f.extraction_rules or [],
+                        "examples": f.examples or [],
+                        "normalize": f.normalize or "",
+                        "regex": f.regex or "",
                         "enum": f.enum or [],
                         "range": f.range or [],
-                        "regex": f.regex or "",
-                        "normalize": f.normalize or ""
+                        "units": f.units or "",
+                        "notes": f.notes or ""
                     }
                     for f in spec.fields
                 ],
+                "business_rules": getattr(spec, 'business_rules', []),
+                "record_grouping_logic": getattr(spec, 'record_grouping_logic', ''),
+                "document_context": getattr(spec, 'document_context', {}),
+                "extraction_focus": getattr(spec, 'extraction_focus', []),
+                "source_path_filter": getattr(spec, 'source_path_filter', []),
                 "constraints": getattr(spec, 'constraints', [])
             }
         },
@@ -302,25 +332,73 @@ def build_messages(
     # Create PromptBuilder instance for extraction
     builder = PromptBuilder(spec.name, data_dict, task_type="extraction")
     
-    # Add extraction rules
-    builder.add_rule("Use ONLY the text inside provided chunks; no outside knowledge.")
-    builder.add_rule("Cite 1–3 short snippets per filled field with their chunk_id.")
-    builder.add_rule("If wording says 'up to and including X', the next band begins at X+0.01 for currency.")
-    builder.add_rule("Represent open-ended upper bounds as null.")
-    builder.add_rule("When evidence conflicts, prefer the clearest official statement; otherwise leave null with 'notes'.")
-    builder.add_rule("If defaults.country/currency are provided, prefer them unless contradicted by text (explain contradictions in 'notes').")
+    # Add comprehensive extraction rules
+    builder.add_rule("DOMAIN AGNOSTIC RULES:")
+    builder.add_rule("Extract ONLY information explicitly stated or clearly implied in the provided chunks")
+    builder.add_rule("Never use external knowledge beyond what's in the chunks")
+    builder.add_rule("If the data dictionary specifies a business perspective, extract from that viewpoint consistently")
+    builder.add_rule("Create one record for each distinct entity/rule/threshold/item as defined by the primary key")
+    
+    builder.add_rule("FIELD EXTRACTION:")
+    builder.add_rule("For each field, follow the extraction_rules provided in the data dictionary")
+    builder.add_rule("Use the hints array to identify field values in natural language text")
+    builder.add_rule("Apply validation_patterns if specified")
+    builder.add_rule("When text is ambiguous, prefer the interpretation that aligns with the business_rules")
+    
+    builder.add_rule("RECORD CREATION LOGIC:")
+    builder.add_rule("Follow the record_grouping_logic from data dictionary to determine record boundaries")
+    builder.add_rule("Ensure primary key uniqueness - each record must have a unique combination of primary key fields")
+    builder.add_rule("If business_rules specify relationships, maintain those constraints across records")
+    
+    builder.add_rule("CONFIDENCE AND EVIDENCE:")
+    builder.add_rule("Higher confidence (0.95) for explicitly stated facts")
+    builder.add_rule("Medium confidence (0.80) for clearly implied information")
+    builder.add_rule("Lower confidence (0.55) for information requiring interpretation")
+    builder.add_rule("Always provide evidence snippets that directly support each extracted value")
+    
+    builder.add_rule("HANDLING AMBIGUITY:")
+    builder.add_rule("When multiple interpretations are possible, choose the one most consistent with the document_context")
+    builder.add_rule("If extraction_focus specifies priorities, follow those guidelines")
+    builder.add_rule("When in doubt, prefer null values with explanatory notes rather than guessing")
+    
     builder.add_rule("OUTPUT: Strictly follow the JSON Schema below.")
     
-    # Add banding hints if schema looks like thresholds
+    # Add adaptive banding logic
+    builder.add_rule("ADAPTIVE BANDING LOGIC:")
+    builder.add_rule("IF the data dictionary indicates threshold/range-based data:")
+    builder.add_rule("- Identify ALL distinct thresholds mentioned in chunks")
+    builder.add_rule("- Create separate records for each range with different rule applications")
+    builder.add_rule("- Ensure no gaps in coverage unless explicitly stated")
+    builder.add_rule("- Handle open-ended ranges as specified in field extraction_rules")
+    
+    builder.add_rule("IF the data dictionary indicates categorical/enumerated data:")
+    builder.add_rule("- Extract each distinct category/item as a separate record")
+    builder.add_rule("- Group related items according to the record_grouping_logic")
+    
+    builder.add_rule("IF the data dictionary indicates relational data:")
+    builder.add_rule("- Maintain parent-child or hierarchical relationships as specified")
+    builder.add_rule("- Ensure referential integrity across related records")
+    
+    # Add quality assurance rules
+    builder.add_rule("QUALITY ASSURANCE:")
+    builder.add_rule("Validate each record against the business_rules from data dictionary")
+    builder.add_rule("Check that all required fields are populated or explicitly marked null")
+    builder.add_rule("Ensure extracted values match validation_patterns where specified")
+    builder.add_rule("Verify that the extraction_perspective is consistently applied")
+    builder.add_rule("Flag any conflicts between chunks in the notes field")
+    
+    # Add specific banding hints if schema looks like thresholds
     if _has_field(spec, "value_min") and _has_field(spec, "value_max") and _has_field(spec, "duty_applicable") and _has_field(spec, "tax_applicable"):
-        builder.add_rule("BANDING:")
+        builder.add_rule("SPECIFIC BANDING FOR THRESHOLDS:")
         builder.add_rule("Identify ALL threshold tiers present; never merge tiers with different duty/tax flags.")
         builder.add_rule("Each tier becomes one record.")
+        builder.add_rule("If wording says 'up to and including X', the next band begins at X+0.01 for currency.")
+        builder.add_rule("Represent open-ended upper bounds as null.")
     
     # Add chunks
     for ch in chunks:
         builder.add_chunk(
-            ch["chunk_id"], 
+            ch.get("chunk_id", ch.get("id", "")), 
             trim(ch.get("text", ""), 1200)
         )
     
@@ -346,11 +424,10 @@ def call_llm_generate_with_instructor(
 ) -> DeminimisExtraction:
     """Extract records using Instructor with Pydantic models and automatic validation."""
     
-    print(f"\n>>> CALLING INSTRUCTOR FOR EXTRACTION:")
-    print(f"   Model: {model}")
-    print(f"   Schema: {spec.name}")
-    print(f"   Number of chunks: {len(chunks)}")
-    sys.stdout.flush()
+    logger.info(f"CALLING INSTRUCTOR FOR EXTRACTION:")
+    logger.info(f"   Model: {model}")
+    logger.info(f"   Schema: {spec.name}")
+    logger.info(f"   Number of chunks: {len(chunks)}")
     
     # Create Instructor client
     instructor_client = instructor.from_openai(client)
@@ -362,8 +439,7 @@ def call_llm_generate_with_instructor(
     # Use the existing messages as-is - they already contain all your prompts!
     all_messages = messages
     
-    print(f"   Number of messages: {len(all_messages)}")
-    sys.stdout.flush()
+    logger.info(f"   Number of messages: {len(all_messages)}")
     
     try:
         # Extract using Instructor with automatic validation and retries
@@ -375,16 +451,14 @@ def call_llm_generate_with_instructor(
             temperature=0.0
         )
         
-        print(f"   ✅ Instructor extraction successful!")
-        print(f"   Records extracted: {len(result.records)}")
-        print(f"   Policy tiers: {len(result.policy_signature.tiers)}")
-        sys.stdout.flush()
+        logger.info(f"   ✅ Instructor extraction successful!")
+        logger.info(f"   Records extracted: {len(result.records)}")
+        logger.info(f"   Policy tiers: {len(result.policy_signature.tiers)}")
         
         return result
         
     except Exception as e:
-        print(f"   ❌ Instructor extraction failed: {e}")
-        sys.stdout.flush()
+        logger.error(f"   ❌ Instructor extraction failed: {e}")
         raise
 
 def convert_instructor_to_legacy_format(extraction: DeminimisExtraction, source_file: str) -> List[Dict[str, Any]]:
@@ -425,33 +499,32 @@ def call_llm_generate(
     extraction_schema = build_extractor_response_schema(spec)
     messages = build_messages(spec, chunks, row_json_schema, defaults)
 
-    # Print the complete prompt being sent to LLM
-    print("\n" + "="*80)
-    print("LLM PROMPT BEING SENT:")
-    print("="*80)
+    # Log the complete prompt being sent to LLM
+    logger.info("="*80)
+    logger.info("LLM PROMPT BEING SENT:")
+    logger.info("="*80)
     for i, msg in enumerate(messages, 1):
-        print(f"\n--- MESSAGE {i}: {msg['role'].upper()} ---")
+        logger.info(f"\n--- MESSAGE {i}: {msg['role'].upper()} ---")
         if msg['role'] == 'user':
             # Pretty print JSON user message
             try:
                 user_data = json.loads(msg['content'])
-                print(json.dumps(user_data, indent=2, ensure_ascii=False))
+                logger.info(json.dumps(user_data, indent=2, ensure_ascii=False))
             except:
-                print(msg['content'])
+                logger.info(msg['content'])
         else:
-            print(msg['content'])
-        print("-" * 60)
-    print("="*80)
-    print("END OF PROMPT")
-    print("="*80 + "\n")
+            logger.info(msg['content'])
+        logger.info("-" * 60)
+    logger.info("="*80)
+    logger.info("END OF PROMPT")
+    logger.info("="*80)
 
-    print(f"\n>>> CALLING OPENAI API:")
-    print(f"   Model: {model}")
-    print(f"   Temperature: 0")
-    print(f"   Response Format: JSON Schema (strict)")
-    print(f"   Schema Name: {spec.name}_extraction")
-    print(f"   Number of messages: {len(messages)}")
-    sys.stdout.flush()  # Ensure output appears immediately
+    logger.info(f"CALLING OPENAI API:")
+    logger.info(f"   Model: {model}")
+    logger.info(f"   Temperature: 0")
+    logger.info(f"   Response Format: JSON Schema (strict)")
+    logger.info(f"   Schema Name: {spec.name}_extraction")
+    logger.info(f"   Number of messages: {len(messages)}")
     
     resp = client.chat.completions.create(
         model=model,
@@ -468,18 +541,18 @@ def call_llm_generate(
     )
     content = resp.choices[0].message.content or "{}"
     
-    # Print the LLM response
-    print("\n" + "="*80)
-    print("LLM RESPONSE RECEIVED:")
-    print("="*80)
+    # Log the LLM response
+    logger.info("="*80)
+    logger.info("LLM RESPONSE RECEIVED:")
+    logger.info("="*80)
     try:
         response_data = json.loads(content)
-        print(json.dumps(response_data, indent=2, ensure_ascii=False))
+        logger.info(json.dumps(response_data, indent=2, ensure_ascii=False))
     except:
-        print(content)
-    print("="*80)
-    print("END OF RESPONSE")
-    print("="*80 + "\n")
+        logger.info(content)
+    logger.info("="*80)
+    logger.info("END OF RESPONSE")
+    logger.info("="*80)
     
     try:
         return json.loads(content)
@@ -546,22 +619,39 @@ def extract_file_with_llm(
     # union for file-level evidence
     file_level_union_chunk_ids: set[str] = set()
 
-    print(f"   [BATCH] {len(file_chunks)} chunks -> {len(batches)} batch(es)")
+    logger.info(f"   [BATCH] {len(file_chunks)} chunks -> {len(batches)} batch(es)")
+    logger.info(f"   [TOTAL CHUNKS] Processing ALL {len(file_chunks)} chunks from file in {len(batches)} batches")
+    
     for b_ix, batch in enumerate(batches, start=1):
-        batch_chunk_ids = [c["chunk_id"] for c in batch]
+        batch_chunk_ids = [c.get("chunk_id", c.get("id", "")) for c in batch]
         file_level_union_chunk_ids.update(batch_chunk_ids)
 
-        print(f"   [PROCESS] Batch {b_ix}/{len(batches)} with {len(batch)} chunks")
-        print(f"   [CHUNKS] Chunk IDs in this batch: {[c['chunk_id'] for c in batch]}")
+        logger.info(f"   [PROCESS] Batch {b_ix}/{len(batches)} with {len(batch)} chunks")
+        logger.info(f"   [CHUNKS] Chunk IDs in this batch: {[c.get('chunk_id', c.get('id', '')) for c in batch]}")
+        logger.info(f"   [PROGRESS] Processing chunks {len(file_level_union_chunk_ids)}/{len(file_chunks)} total chunks so far")
+        
         llm_json = call_llm_generate(client, model, spec, batch, defaults)
         rows_raw = records_from_llm_json(llm_json, spec)
         valid = validate_rows(rows_raw, spec)
+        
+        logger.info(f"   [BATCH RESULT] Extracted {len(valid)} records from batch {b_ix}")
 
         if chunk_ids_mode == "batch":
             for _ in valid:
                 all_chunk_ids_lists.append(batch_chunk_ids)
 
         all_valid_rows.extend(valid)
+    
+    logger.info(f"   [COMPLETE] Processed ALL {len(file_level_union_chunk_ids)} chunks from file, extracted {len(all_valid_rows)} total records")
+    
+    # Validation: Ensure we processed all chunks
+    if len(file_level_union_chunk_ids) != len(file_chunks):
+        logger.warning(f"   [WARNING] Chunk count mismatch! Expected {len(file_chunks)} chunks, processed {len(file_level_union_chunk_ids)} chunks")
+        missing_chunks = set(c.get("chunk_id", c.get("id", "")) for c in file_chunks) - file_level_union_chunk_ids
+        if missing_chunks:
+            logger.warning(f"   [MISSING] Unprocessed chunks: {list(missing_chunks)}")
+    else:
+        logger.info(f"   [VALIDATION] ✅ All {len(file_chunks)} chunks processed successfully")
 
     if chunk_ids_mode == "file":
         union_sorted = sorted(file_level_union_chunk_ids)
@@ -581,6 +671,7 @@ def main():
     ap.add_argument("--out-records", default="output/records.jsonl")
     ap.add_argument("--llm", default="gpt-4o-mini", help="LLM model name")
     ap.add_argument("--source-filter", help="Override source path filter (comma-separated patterns)")
+    ap.add_argument("--files", nargs="+", help="List of specific files to process (overrides source_path_filter)")
     ap.add_argument("--max-tokens-per-batch", type=int, default=100_000)
     # new: runtime defaults and chunk-id strategy
     ap.add_argument("--defaults-json", help='Inline JSON defaults, e.g. \'{"country":"CA","currency":"CAD"}\'')
@@ -600,18 +691,24 @@ def main():
     override_source_filter = None
     if args.source_filter:
         override_source_filter = [p.strip() for p in args.source_filter.split(",")]
-        print(f"🔍 Using source filter override: {override_source_filter}")
+        logger.info(f"🔍 Using source filter override: {override_source_filter}")
+
+    # files list takes precedence over source filter
+    files_list = None
+    if args.files:
+        files_list = args.files
+        logger.info(f"📁 Using files list: {files_list}")
 
     defaults = load_defaults(args)
     if defaults:
-        print(f"⚙️  Defaults in use: {defaults}")
+        logger.info(f"⚙️  Defaults in use: {defaults}")
 
     chunks = load_chunks(args.chunks)
-    by_file = group_by_file(chunks, spec, override_source_filter)
+    by_file = group_by_file(chunks, spec, override_source_filter, files_list)
 
-    print(f"[INFO] Files to process for model '{args.model}': {len(by_file)}")
+    logger.info(f"Files to process for model '{args.model}': {len(by_file)}")
     for fp, arr in by_file.items():
-        print(f"   - {fp}: {len(arr)} chunks")
+        logger.info(f"   - {fp}: {len(arr)} chunks")
 
     all_rows: List[Dict[str, Any]] = []
 
@@ -619,9 +716,11 @@ def main():
         if not file_chunks:
             continue
 
+        logger.info(f"📁 [FILE] Processing {file_path} with {len(file_chunks)} chunks")
+        
         if args.use_instructor:
             # Use Instructor for extraction
-            print(f"\n[INSTRUCTOR] Processing {file_path} with Instructor...")
+            logger.info(f"[INSTRUCTOR] Processing {file_path} with Instructor...")
             try:
                 extraction = call_llm_generate_with_instructor(
                     client=client,
@@ -635,11 +734,12 @@ def main():
                 instructor_rows = convert_instructor_to_legacy_format(extraction, file_path)
                 all_rows.extend(instructor_rows)
                 
-                print(f"[SUCCESS] Instructor extracted {len(instructor_rows)} records from {file_path}")
+                logger.info(f"[SUCCESS] Instructor extracted {len(instructor_rows)} records from {file_path}")
+                logger.info(f"📊 [SUMMARY] File {file_path}: {len(file_chunks)} chunks → {len(instructor_rows)} records")
                 
             except Exception as e:
-                print(f"[ERROR] Instructor extraction failed for {file_path}: {e}")
-                print("[FALLBACK] Using legacy extraction...")
+                logger.error(f"[ERROR] Instructor extraction failed for {file_path}: {e}")
+                logger.info("[FALLBACK] Using legacy extraction...")
                 
                 # Fallback to legacy extraction
                 rows, chunk_ids_lists = extract_file_with_llm(
@@ -680,13 +780,15 @@ def main():
                     "chunk_ids": chunk_ids_lists[i] if i < len(chunk_ids_lists) else []
                 }
                 all_rows.append(record_data)
+            
+            logger.info(f"📊 [SUMMARY] File {file_path}: {len(file_chunks)} chunks → {len(rows)} records")
 
     Path(args.out_records).parent.mkdir(parents=True, exist_ok=True)
     with open(args.out_records, "w", encoding="utf-8") as f:
         for r in all_rows:
             f.write(json.dumps(r, ensure_ascii=False) + "\n")
 
-    print(f"[SUCCESS] Wrote {len(all_rows)} records -> {args.out_records}")
+    logger.info(f"[SUCCESS] Wrote {len(all_rows)} records -> {args.out_records}")
 
 if __name__ == "__main__":
     main()

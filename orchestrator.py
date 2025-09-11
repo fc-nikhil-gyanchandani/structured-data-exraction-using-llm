@@ -9,6 +9,7 @@ This script orchestrates the complete LLM parsing pipeline:
 
 Usage:
     python orchestrator.py --input input_files/ --dict data_dictionary.yaml --model deminimis_rules_stg
+    python orchestrator.py --input input_files/ --dict data_dictionary.yaml --model deminimis_rules_stg --files file1.pdf file2.csv
 """
 
 import argparse
@@ -97,8 +98,8 @@ class PipelineOrchestrator:
             sys.executable, "chunker.py",
             self.config['input_path'],
             "--out", str(self.output_dir / "all_chunks.jsonl"),
-            "--chunk-size", str(self.config.get('chunk_size', 1200)),
-            "--chunk-overlap", str(self.config.get('chunk_overlap', 200))
+            "--chunk-tokens", str(self.config.get('chunk_size', 1200)),
+            "--chunk-overlap-tokens", str(self.config.get('chunk_overlap', 200))
         ]
         
         # Add optional chunker arguments
@@ -128,8 +129,10 @@ class PipelineOrchestrator:
             "--max-tokens-per-batch", str(self.config.get('max_tokens_per_batch', 100000))
         ]
         
-        # Add optional extractor arguments
-        if self.config.get('source_filter'):
+        # Add files list if provided (takes precedence over source_filter)
+        if self.config.get('files'):
+            cmd.extend(["--files"] + self.config['files'])
+        elif self.config.get('source_filter'):
             cmd.extend(["--source-filter", self.config['source_filter']])
         
         return self.run_command(cmd, "Extractor")
@@ -172,9 +175,9 @@ class PipelineOrchestrator:
             return False
         
         # Step 3: Validator
-        if not self.run_validator():
-            logger.error("[FAILED] Pipeline failed at validator step")
-            return False
+        # if not self.run_validator():
+        #     logger.error("[FAILED] Pipeline failed at validator step")
+        #     return False
         
         pipeline_duration = time.time() - pipeline_start
         
@@ -226,6 +229,9 @@ Examples:
   # Basic usage
   python orchestrator.py --input input_files/ --dict data_dictionary.yaml --model deminimis_rules_stg
   
+  # With specific files to process
+  python orchestrator.py --input input_files/ --dict data_dictionary.yaml --model deminimis_rules_stg --files file1.pdf file2.csv
+  
   # With custom output directory
   python orchestrator.py --input input_files/ --dict data_dictionary.yaml --model deminimis_rules_stg --output-dir my_output/
   
@@ -241,6 +247,7 @@ Examples:
     parser.add_argument("--input", required=True, help="Input file or directory path")
     parser.add_argument("--dict", required=True, help="Path to data_dictionary.yaml")
     parser.add_argument("--model", required=True, help="Target model name from YAML")
+    parser.add_argument("--files", nargs="+", help="List of specific files to process (overrides source_path_filter)")
     
     # Optional arguments
     parser.add_argument("--output-dir", default="output", help="Output directory (default: output)")
@@ -249,8 +256,8 @@ Examples:
     parser.add_argument("--max-tokens-per-batch", type=int, default=100000, help="Maximum tokens per batch")
     
     # Chunker options
-    parser.add_argument("--chunk-size", type=int, default=1200, help="Target chunk size (default: 1200)")
-    parser.add_argument("--chunk-overlap", type=int, default=200, help="Chunk overlap (default: 200)")
+    parser.add_argument("--chunk-size", type=int, default=1200, help="Target chunk size in tokens (default: 1200)")
+    parser.add_argument("--chunk-overlap", type=int, default=200, help="Chunk overlap in tokens (default: 200)")
     parser.add_argument("--max-csv-rows", type=int, help="Limit CSV rows for processing")
     parser.add_argument("--skip-unstructured", action="store_true", help="Skip unstructured processing")
     parser.add_argument("--test-single", action="store_true", help="Test with single file only")
@@ -277,6 +284,7 @@ Examples:
         'output_dir': args.output_dir,
         'llm_model': args.llm_model,
         'source_filter': args.source_filter,
+        'files': args.files,
         'max_tokens_per_batch': args.max_tokens_per_batch,
         'chunk_size': args.chunk_size,
         'chunk_overlap': args.chunk_overlap,

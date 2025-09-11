@@ -20,12 +20,11 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler(sys.stdout),
-        logging.FileHandler('extractor.log')
+        logging.FileHandler('chunker.log')
     ]
 )
 logger = logging.getLogger(__name__)
 
-logger.info("Starting LLM Parser - initializing imports...")
 
 # Layer 2: chunking (LangChain) - import these first as they're more stable
 try:
@@ -34,51 +33,74 @@ try:
         MarkdownHeaderTextSplitter,
         HTMLHeaderTextSplitter,
     )
-    logger.info("Successfully imported LangChain text splitters")
 except ImportError as e:
     logger.error(f"Failed to import LangChain text splitters: {e}")
     sys.exit(1)
 
-# Additional imports for fallback processing
+# Additional imports
 import csv
 import re
-from bs4 import BeautifulSoup
 
 # Layer 1: extraction - with safer imports - DEFER until needed
 UNSTRUCTURED_AVAILABLE = False
 Element = None
 
-def safe_init_unstructured():
-    """Safely initialize unstructured library only when needed."""
+def init_unstructured():
+    """Initialize unstructured library - required for processing."""
     global UNSTRUCTURED_AVAILABLE, Element
     
     if UNSTRUCTURED_AVAILABLE:
         return True
     
-    logger.info("Attempting to initialize unstructured library...")
-    logger.warning("Note: If this hangs or crashes, the script will automatically fall back to alternative methods")
     
     try:
-        # Try to import with a simple approach first
-        logger.info("Importing unstructured.partition.auto...")
-        from unstructured.partition.auto import partition
-        logger.info("✓ Successfully imported partition")
-        
-        logger.info("Importing unstructured.documents.elements...")
+        # Import Element first (this usually works)
         from unstructured.documents.elements import Element as UnstructuredElement
-        logger.info("✓ Successfully imported Element")
-        
-        # Test if it actually works by doing a simple operation
-        logger.info("Testing unstructured library functionality...")
+        try:
+            from unstructured.partition import pdf, html, text
+            
+            # Create a wrapper function that routes to appropriate partitioner
+            def partition(filename, **kwargs):
+                """Wrapper function that routes to appropriate partitioner based on file type."""
+                from pathlib import Path
+                file_path = Path(filename)
+                ext = file_path.suffix.lower()
+                
+                if ext == '.pdf':
+                    return pdf.partition_pdf(filename, **kwargs)
+                elif ext in ['.html', '.htm']:
+                    return html.partition_html(filename, **kwargs)
+                elif ext in ['.txt', '.md']:
+                    return text.partition_text(filename, **kwargs)
+                else:
+                    # Default to text partitioner
+                    return text.partition_text(filename, **kwargs)
+            
+            
+        except Exception as specific_error:
+            
+            # Only try partition.auto if specific imports failed
+            try:
+                from unstructured.partition.auto import partition
+                    
+            except Exception as partition_error:
+                logger.error(f"Failed to import partition.auto: {partition_error}")
+                raise specific_error  # Re-raise the specific import error
         
         UNSTRUCTURED_AVAILABLE = True
         Element = UnstructuredElement
-        logger.info("Successfully initialized unstructured library")
+        
+        # Make partition function available globally
+        import sys
+        current_module = sys.modules[__name__]
+        current_module.partition = partition
+        
         return True
         
     except Exception as e:
         logger.error(f"Failed to initialize unstructured library: {e}")
-        logger.info("Will use fallback processing methods instead")
+        logger.error(f"Error type: {type(e).__name__}")
+        logger.error("Unstructured library is required for document processing")
         UNSTRUCTURED_AVAILABLE = False
         Element = None
         return False
@@ -145,32 +167,23 @@ def extract_schema_cues(text: str) -> List[str]:
 
 def detect_source_type(path: Path) -> str:
     ext = path.suffix.lower()
-    logger.debug(f"Detecting source type for {path.name} with extension: {ext}")
-    
     if ext in [".pdf"]:
-        logger.debug(f"Detected PDF file: {path.name}")
         return "pdf"
     if ext in [".html", ".htm"]:
-        logger.debug(f"Detected HTML file: {path.name}")
         return "html"
     if ext in [".txt", ".md", ".rst"]:
-        logger.debug(f"Detected text file: {path.name}")
         return "txt"
     if ext in [".csv", ".tsv", ".xlsx"]:
-        logger.debug(f"Detected CSV/TSV/XLSX file: {path.name}")
         return "csv"
-    # fallback: let unstructured handle many more, but we'll label as txt
-    logger.debug(f"Unknown extension {ext}, defaulting to txt for {path.name}")
+    # let unstructured handle many more, but we'll label as txt
     return "txt"
 
 def elements_to_text(element: Any) -> str:
     # unstructured elements have .text; tables may have .metadata.text_as_html etc.
     try:
         text = (element.text or "").strip()
-        logger.debug(f"Extracted text from element: {len(text)} characters")
         return text
     except Exception as e:
-        logger.warning(f"Failed to extract text from element: {e}")
         return ""
 
 def element_chunk_type(element: Any) -> str:
@@ -187,7 +200,6 @@ def element_chunk_type(element: Any) -> str:
     else:
         chunk_type = "text"
     
-    logger.debug(f"Element type '{et}' mapped to chunk type '{chunk_type}'")
     return chunk_type
 
 def base_metadata(element: Any) -> Dict[str, Any]:
@@ -207,130 +219,46 @@ def base_metadata(element: Any) -> Dict[str, Any]:
             if coords and getattr(coords, "points", None):
                 # store as bbox if provided
                 md["coordinates_points"] = coords.points
-        logger.debug(f"Extracted metadata: {len(md)} fields")
     except Exception as e:
-        logger.warning(f"Failed to extract metadata: {e}")
+        pass
     return {k: v for k, v in md.items() if v is not None}
 
-# ---------- Fallback Processing Methods ----------
-
-def extract_html_fallback(path: Path) -> List[Chunk]:
-    """Fallback HTML processing using BeautifulSoup when unstructured fails."""
-    logger.info(f"Using BeautifulSoup fallback for HTML file: {path.name}")
-    try:
-        with open(path, 'r', encoding='utf-8') as f:
-            content = f.read()
-        
-        logger.debug(f"Read {len(content)} characters from HTML file")
-        soup = BeautifulSoup(content, 'html.parser')
-        
-        # Remove script and style elements
-        for script in soup(["script", "style"]):
-            script.decompose()
-        
-        # Extract text
-        text = soup.get_text()
-        
-        # Clean up whitespace
-        lines = (line.strip() for line in text.splitlines())
-        chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
-        text = ' '.join(chunk for chunk in chunks if chunk)
-        
-        logger.info(f"HTML fallback extracted {len(text)} characters of clean text")
-        
-        if text:
-            return [Chunk(
-                chunk_id=f"{path.name}:html-fallback",
-                source_path=str(path),
-                filetype="html",
-                text=text,
-                tokens_est=estimate_tokens(text),
-                fingerprint=generate_fingerprint(text),
-                schema_cues=extract_schema_cues(text),
-                created_at=get_current_timestamp()
-            )]
-    except Exception as e:
-        logger.error(f"HTML fallback processing failed for {path.name}: {e}")
-    
-    return []
-
-def extract_txt_fallback(path: Path) -> List[Chunk]:
-    """Fallback text processing when unstructured fails."""
-    logger.info(f"Using direct read fallback for text file: {path.name}")
-    try:
-        with open(path, 'r', encoding='utf-8') as f:
-            content = f.read()
-        
-        logger.info(f"Text fallback read {len(content)} characters")
-        
-        if content.strip():
-            return [Chunk(
-                chunk_id=f"{path.name}:txt-fallback",
-                source_path=str(path),
-                filetype="txt",
-                text=content.strip(),
-                tokens_est=estimate_tokens(content.strip()),
-                fingerprint=generate_fingerprint(content.strip()),
-                schema_cues=extract_schema_cues(content.strip()),
-                created_at=get_current_timestamp()
-            )]
-    except Exception as e:
-        logger.error(f"Text fallback processing failed for {path.name}: {e}")
-    
-    return []
-
-def extract_pdf_fallback(path: Path) -> List[Chunk]:
-    """Fallback PDF processing when unstructured fails."""
-    logger.info(f"Using PyPDF2 fallback for PDF file: {path.name}")
-    try:
-        # Try using PyPDF2 as a fallback
-        import PyPDF2
-        chunks = []
-        
-        with open(path, 'rb') as file:
-            pdf_reader = PyPDF2.PdfReader(file)
-            logger.info(f"PDF has {len(pdf_reader.pages)} pages")
-            
-            for page_num, page in enumerate(pdf_reader.pages):
-                text = page.extract_text()
-                if text.strip():
-                    chunks.append(Chunk(
-                        chunk_id=f"{path.name}:page-{page_num}",
-                        source_path=str(path),
-                        filetype="pdf",
-                        page_range=[page_num, page_num],
-                        text=text.strip(),
-                        tokens_est=estimate_tokens(text.strip()),
-                        fingerprint=generate_fingerprint(text.strip()),
-                        schema_cues=extract_schema_cues(text.strip()),
-                        created_at=get_current_timestamp()
-                    ))
-                    logger.debug(f"Extracted {len(text.strip())} characters from page {page_num}")
-        
-        logger.info(f"PDF fallback extracted {len(chunks)} chunks from {len(pdf_reader.pages)} pages")
-        return chunks
-    except ImportError:
-        logger.warning(f"PyPDF2 not available for PDF fallback processing of {path.name}")
-    except Exception as e:
-        logger.error(f"PDF fallback processing failed for {path.name}: {e}")
-    
-    return []
 
 # ---------- Layer 1: Extraction / Normalization ----------
 
 def extract_unstructured(path: Path) -> List[Chunk]:
     """Use Unstructured to partition PDFs/HTML/TXT into elements, then normalize to Chunk."""
-    if not safe_init_unstructured():
-        logger.warning(f"Unstructured library not available, skipping {path.name}")
-        return []
+    if not init_unstructured():
+        logger.error(f"Unstructured library not available, cannot process {path.name}")
+        raise RuntimeError("Unstructured library is required for document processing")
     
-    logger.info(f"Processing {path.name} with unstructured library")
     try:
-        # Import partition here after safe initialization
-        from unstructured.partition.auto import partition
         
-        elements = partition(filename=str(path))
-        logger.info(f"Unstructured extracted {len(elements)} elements from {path.name}")
+        # Get the partition function from our global scope
+        import sys
+        current_module = sys.modules[__name__]
+        partition_func = getattr(current_module, 'partition', None)
+        
+        if partition_func is None:
+            # Fallback: try to get it from the init function
+            logger.warning("Partition function not found in global scope, trying to recreate...")
+            from unstructured.partition import pdf, html, text
+            
+            def partition(filename, **kwargs):
+                from pathlib import Path
+                file_path = Path(filename)
+                ext = file_path.suffix.lower()
+                
+                if ext == '.pdf':
+                    return pdf.partition_pdf(filename, **kwargs)
+                elif ext in ['.html', '.htm']:
+                    return html.partition_html(filename, **kwargs)
+                elif ext in ['.txt', '.md']:
+                    return text.partition_text(filename, **kwargs)
+                else:
+                    return text.partition_text(filename, **kwargs)
+        
+        elements = partition_func(str(path))
         
         chunks: List[Chunk] = []
         source_type = detect_source_type(path)
@@ -338,7 +266,6 @@ def extract_unstructured(path: Path) -> List[Chunk]:
         for i, el in enumerate(elements):
             text = elements_to_text(el)
             if not text:
-                logger.debug(f"Skipping empty element {i} from {path.name}")
                 continue
                 
             ctype = element_chunk_type(el)
@@ -376,36 +303,31 @@ def extract_unstructured(path: Path) -> List[Chunk]:
                 created_at=get_current_timestamp()
             )
             chunks.append(chunk)
-            logger.debug(f"Created chunk {i} for {path.name}: type={ctype}, text_length={len(text)}")
         
-        logger.info(f"Successfully created {len(chunks)} chunks from {path.name} using unstructured")
         return chunks
     except Exception as e:
         logger.error(f"Unstructured processing failed for {path.name}: {e}")
+        import traceback
+        logger.error(f"Full traceback: {traceback.format_exc()}")
         return []
 
 def extract_csv(path: Path, max_rows: Optional[int] = None) -> List[Chunk]:
     """Process CSV/TSV/XLSX files with 100 rows per chunk using old schema format."""
-    logger.info(f"Processing CSV/XLSX file: {path.name}")
     
     # Read the file based on extension
     if path.suffix.lower() == ".xlsx":
         try:
             df = pd.read_excel(path)
-            logger.info(f"XLSX file {path.name} has {len(df)} rows and {len(df.columns)} columns")
         except ImportError:
             logger.error("openpyxl not available for XLSX processing. Install with: pip install openpyxl")
             return []
     elif path.suffix.lower() == ".tsv":
         df = pd.read_csv(path, sep="\t")
-        logger.info(f"TSV file {path.name} has {len(df)} rows and {len(df.columns)} columns")
     else:
         df = pd.read_csv(path)
-        logger.info(f"CSV file {path.name} has {len(df)} rows and {len(df.columns)} columns")
     
     if max_rows is not None:
         df = df.head(max_rows)
-        logger.info(f"Limited to {max_rows} rows for processing")
     
     chunks: List[Chunk] = []
     rows_per_chunk = 100
@@ -461,94 +383,259 @@ def extract_csv(path: Path, max_rows: Optional[int] = None) -> List[Chunk]:
         class OldSchemaChunk:
             def __init__(self, data):
                 self.data = data
+                # Add tokens_est attribute for compatibility with normalization
+                self.tokens_est = data['metadata']['tokens_est']
             
             def model_dump(self):
                 return self.data
         
         chunks.append(OldSchemaChunk(old_schema_chunk))
-        logger.debug(f"Created chunk for rows {start_idx}-{end_idx} with {len(rows_data)} rows")
     
-    logger.info(f"Created {len(chunks)} chunks from {path.name} (100 rows per chunk)")
     return chunks
 
 def extract_layer1(path: Path, max_csv_rows: Optional[int] = None) -> List[Chunk]:
-    global UNSTRUCTURED_AVAILABLE
-    
-    logger.info(f"Starting Layer 1 extraction for: {path.name}")
     st = detect_source_type(path)
-    logger.info(f"Detected source type: {st} for {path.name}")
     
     if st == "csv":
-        logger.info(f"Processing {path.name} as CSV file")
         return extract_csv(path, max_csv_rows)
     
-    # Try unstructured first, but with better error handling
-    if UNSTRUCTURED_AVAILABLE:
-        logger.info(f"Attempting unstructured processing for {path.name}")
-        try:
-            chunks = extract_unstructured(path)
-            if chunks:
-                logger.info(f"Unstructured processing successful for {path.name}, returning {len(chunks)} chunks")
-                return chunks
-        except Exception as e:
-            logger.error(f"Unstructured processing crashed for {path.name}: {e}")
-            logger.warning("Disabling unstructured library for remaining files due to crash")
-            UNSTRUCTURED_AVAILABLE = False
-    
-    # Fallback processing if unstructured fails or is disabled
-    if not UNSTRUCTURED_AVAILABLE:
-        logger.warning(f"Unstructured library unavailable, using fallback processing for {path.name}")
-    else:
-        logger.warning(f"Unstructured failed for {path.name}, using fallback processing")
-    
-    if st == "html":
-        return extract_html_fallback(path)
-    elif st == "txt":
-        return extract_txt_fallback(path)
-    elif st == "pdf":
-        return extract_pdf_fallback(path)
-    
-    logger.warning(f"No fallback method available for {path.name} with type {st}")
-    return []
+    # Use unstructured for all other file types
+    return extract_unstructured(path)
 
 # ---------- Layer 2: Chunking with LangChain ----------
 
 @dataclass
 class SplitterConfig:
-    target_chunk_size: int = 1200          # ~ characters, not tokens
-    chunk_overlap: int = 200
+    target_chunk_tokens: int = 500         # target tokens per chunk
+    chunk_overlap_tokens: int = 50         # overlap tokens
     respect_markdown: bool = True
     use_html_headers: bool = True
 
+def normalize_chunk_sizes(chunks: List[Chunk], target_tokens: int = 500, overlap_tokens: int = 50) -> List[Chunk]:
+    """Post-process chunks to ensure more even token distribution around target_tokens."""
+    if not chunks:
+        return chunks
+    
+    
+    normalized = []
+    i = 0
+    
+    while i < len(chunks):
+        current_chunk = chunks[i]
+        # Handle both new schema chunks and old schema chunks
+        if hasattr(current_chunk, 'tokens_est'):
+            current_tokens = current_chunk.tokens_est
+        elif hasattr(current_chunk, 'data') and 'metadata' in current_chunk.data:
+            current_tokens = current_chunk.data['metadata'].get('tokens_est', 0)
+        else:
+            # Skip chunks without token information
+            i += 1
+            continue
+        
+        # If chunk is too small, try to merge with next chunk(s)
+        if current_tokens < target_tokens * 0.75:  # Less than 75% of target
+            # Get text from chunk
+            if hasattr(current_chunk, 'text'):
+                merged_text = current_chunk.text
+            elif hasattr(current_chunk, 'data'):
+                merged_text = current_chunk.data.get('text', '')
+            else:
+                merged_text = ''
+            merged_tokens = current_tokens
+            j = i + 1
+            
+            # Keep merging while we're under target and have more chunks
+            while (j < len(chunks) and 
+                   merged_tokens < target_tokens * 1.25 and  # Don't exceed 125% of target
+                   getattr(chunks[j], 'source_path', '') == getattr(current_chunk, 'source_path', '')):  # Same source file
+                
+                next_chunk = chunks[j]
+                # Get text from next chunk
+                if hasattr(next_chunk, 'text'):
+                    next_text = next_chunk.text
+                elif hasattr(next_chunk, 'data'):
+                    next_text = next_chunk.data.get('text', '')
+                else:
+                    next_text = ''
+                
+                merged_text += " " + next_text
+                merged_tokens = estimate_tokens(merged_text)
+                j += 1
+            
+            # Create merged chunk
+            if j > i + 1:  # We merged some chunks
+                # Get attributes from current chunk
+                if hasattr(current_chunk, 'chunk_id'):
+                    chunk_id = current_chunk.chunk_id
+                elif hasattr(current_chunk, 'data'):
+                    chunk_id = current_chunk.data.get('id', f'merged_chunk_{i}')
+                else:
+                    chunk_id = f'merged_chunk_{i}'
+                
+                if hasattr(current_chunk, 'source_path'):
+                    source_path = current_chunk.source_path
+                elif hasattr(current_chunk, 'data'):
+                    source_path = current_chunk.data.get('source_path', '')
+                else:
+                    source_path = ''
+                
+                if hasattr(current_chunk, 'filetype'):
+                    filetype = current_chunk.filetype
+                elif hasattr(current_chunk, 'data'):
+                    filetype = current_chunk.data.get('source_type', 'unknown')
+                else:
+                    filetype = 'unknown'
+                page_range = getattr(current_chunk, 'page_range', None)
+                section_path = getattr(current_chunk, 'section_path', None)
+                dom_path = getattr(current_chunk, 'dom_path', None)
+                table_id = getattr(current_chunk, 'table_id', None)
+                bbox = getattr(current_chunk, 'bbox', None)
+                overlap_with_prev = getattr(current_chunk, 'overlap_with_prev', 0)
+                schema_cues = getattr(current_chunk, 'schema_cues', [])
+                
+                # Collect schema cues from merged chunks
+                all_schema_cues = schema_cues.copy()
+                for chunk in chunks[i+1:j]:
+                    if hasattr(chunk, 'schema_cues'):
+                        all_schema_cues.extend(chunk.schema_cues)
+                    elif hasattr(chunk, 'data') and 'schema_cues' in chunk.data:
+                        all_schema_cues.extend(chunk.data['schema_cues'])
+                
+                new_chunk = Chunk(
+                    chunk_id=f"{chunk_id}_merged",
+                    source_path=source_path,
+                    filetype=filetype,
+                    page_range=page_range,
+                    section_path=section_path,
+                    dom_path=dom_path,
+                    table_id=table_id,
+                    bbox=bbox,
+                    text=merged_text,
+                    tokens_est=merged_tokens,
+                    overlap_with_prev=overlap_with_prev,
+                    fingerprint=generate_fingerprint(merged_text),
+                    schema_cues=list(set(all_schema_cues)),
+                    created_at=get_current_timestamp()
+                )
+                normalized.append(new_chunk)
+                i = j
+            else:
+                # Couldn't merge, keep as is
+                normalized.append(current_chunk)
+                i += 1
+        
+        # If chunk is too large, try to split it further
+        elif current_tokens > target_tokens * 1.5:  # More than 150% of target
+            # Get text from chunk
+            if hasattr(current_chunk, 'text'):
+                text = current_chunk.text
+            elif hasattr(current_chunk, 'data'):
+                text = current_chunk.data.get('text', '')
+            else:
+                text = ''
+            
+            words = text.split()
+            words_per_chunk = len(words) * target_tokens // current_tokens
+            
+            for k in range(0, len(words), words_per_chunk):
+                chunk_words = words[k:k + words_per_chunk]
+                if not chunk_words:
+                    continue
+                    
+                chunk_text = " ".join(chunk_words)
+                chunk_tokens = estimate_tokens(chunk_text)
+                
+                # Get attributes from current chunk
+                if hasattr(current_chunk, 'chunk_id'):
+                    chunk_id = current_chunk.chunk_id
+                elif hasattr(current_chunk, 'data'):
+                    chunk_id = current_chunk.data.get('id', f'split_chunk_{i}')
+                else:
+                    chunk_id = f'split_chunk_{i}'
+                
+                if hasattr(current_chunk, 'source_path'):
+                    source_path = current_chunk.source_path
+                elif hasattr(current_chunk, 'data'):
+                    source_path = current_chunk.data.get('source_path', '')
+                else:
+                    source_path = ''
+                
+                if hasattr(current_chunk, 'filetype'):
+                    filetype = current_chunk.filetype
+                elif hasattr(current_chunk, 'data'):
+                    filetype = current_chunk.data.get('source_type', 'unknown')
+                else:
+                    filetype = 'unknown'
+                page_range = getattr(current_chunk, 'page_range', None)
+                section_path = getattr(current_chunk, 'section_path', None)
+                dom_path = getattr(current_chunk, 'dom_path', None)
+                table_id = getattr(current_chunk, 'table_id', None)
+                bbox = getattr(current_chunk, 'bbox', None)
+                overlap_with_prev = getattr(current_chunk, 'overlap_with_prev', 0)
+                
+                new_chunk = Chunk(
+                    chunk_id=f"{chunk_id}_split{k//words_per_chunk}",
+                    source_path=source_path,
+                    filetype=filetype,
+                    page_range=page_range,
+                    section_path=section_path,
+                    dom_path=dom_path,
+                    table_id=table_id,
+                    bbox=bbox,
+                    text=chunk_text,
+                    tokens_est=chunk_tokens,
+                    overlap_with_prev=overlap_tokens if k > 0 else overlap_with_prev,
+                    fingerprint=generate_fingerprint(chunk_text),
+                    schema_cues=extract_schema_cues(chunk_text),
+                    created_at=get_current_timestamp()
+                )
+                normalized.append(new_chunk)
+            
+            i += 1
+        
+        else:
+            # Chunk is within acceptable range, keep as is
+            normalized.append(current_chunk)
+            i += 1
+    
+    return normalized
+
 def split_text_payloads(chunks: List[Chunk], cfg: SplitterConfig) -> List[Chunk]:
     """Apply LangChain splitters to the text field while preserving metadata."""
-    logger.info(f"Starting Layer 2 chunking with {len(chunks)} input chunks")
-    logger.info(f"Chunking config: size={cfg.target_chunk_size}, overlap={cfg.chunk_overlap}")
     
     out: List[Chunk] = []
 
-    # Base text splitter (works for most text)
-    rsplit = RecursiveCharacterTextSplitter(
-        chunk_size=cfg.target_chunk_size,
-        chunk_overlap=cfg.chunk_overlap,
-        separators=["\n\n", "\n", " ", ""],
-    )
+    # Use TokenTextSplitter for accurate token-based chunking
+    try:
+        from langchain_text_splitters import TokenTextSplitter
+        rsplit = TokenTextSplitter(
+            chunk_size=cfg.target_chunk_tokens,
+            chunk_overlap=cfg.chunk_overlap_tokens,
+            model_name="gpt-3.5-turbo"  # Use a standard model for token counting
+        )
+    except ImportError:
+        logger.warning("TokenTextSplitter not available, falling back to character-based splitting")
+        # Fallback to character-based with better estimation
+        char_size = cfg.target_chunk_tokens * 4  # Rough conversion
+        char_overlap = cfg.chunk_overlap_tokens * 4
+        rsplit = RecursiveCharacterTextSplitter(
+            chunk_size=char_size,
+            chunk_overlap=char_overlap,
+            separators=["\n\n", "\n", " ", ""],
+        )
 
     for i, ch in enumerate(chunks):
         # Handle both new schema chunks and old schema chunks
         if hasattr(ch, 'data'):  # OldSchemaChunk
             # For CSV chunks with old schema, don't split them further
             out.append(ch)
-            logger.debug(f"Preserving old schema chunk {i+1}/{len(chunks)} without splitting")
             continue
         
         text = ch.text or ""
-        logger.debug(f"Processing chunk {i+1}/{len(chunks)}: {ch.chunk_id}, text_length={len(text)}")
         
         # Specialized handling for Markdown/HTML if you want more structure-aware splitting
         # Here we keep it simple: run RecursiveCharacterTextSplitter for all.
         splits = rsplit.split_text(text)
-        logger.debug(f"Chunk {ch.chunk_id} split into {len(splits)} pieces")
 
         if len(splits) == 0:
             logger.warning(f"Chunk {ch.chunk_id} produced no splits, skipping")
@@ -583,13 +670,15 @@ def split_text_payloads(chunks: List[Chunk], cfg: SplitterConfig) -> List[Chunk]
                 )
             )
     
-    logger.info(f"Layer 2 chunking complete: {len(chunks)} input chunks -> {len(out)} output chunks")
+    
+    # Post-process to ensure more even token distribution
+    out = normalize_chunk_sizes(out, target_tokens=cfg.target_chunk_tokens, overlap_tokens=cfg.chunk_overlap_tokens)
+    
     return out
 
 # ---------- I/O ----------
 
 def write_jsonl(chunks: Iterable[Chunk], out_path: Path) -> None:
-    logger.info(f"Writing {len(list(chunks)) if hasattr(chunks, '__len__') else 'unknown'} chunks to {out_path}")
     out_path.parent.mkdir(parents=True, exist_ok=True)
     
     chunk_count = 0
@@ -599,29 +688,29 @@ def write_jsonl(chunks: Iterable[Chunk], out_path: Path) -> None:
             if hasattr(ch, 'model_dump'):
                 f.write(json.dumps(ch.model_dump(), ensure_ascii=False) + "\n")
             else:
-                # Fallback for old schema chunks
+                # Handle old schema chunks
                 f.write(json.dumps(ch, ensure_ascii=False) + "\n")
             chunk_count += 1
     
-    logger.info(f"Successfully wrote {chunk_count} chunks to {out_path}")
 
 # ---------- CLI ----------
 
 def main():
-    global UNSTRUCTURED_AVAILABLE
     
-    logger.info("Starting LLM Parser extraction pipeline")
+    # Initialize unstructured library at startup
+    if not init_unstructured():
+        logger.error("Failed to initialize unstructured library. Exiting.")
+        sys.exit(1)
     
     parser = argparse.ArgumentParser(
-        description="Two-layer chunking pipeline: Unstructured (extraction) + LangChain (chunking)."
+        description="Two-layer chunking pipeline using Unstructured (extraction) + LangChain (chunking)."
     )
     parser.add_argument("input", help="File or directory path")
     parser.add_argument("--out", default="out/chunks.jsonl", help="Output JSONL file")
     parser.add_argument("--max-csv-rows", type=int, default=None, help="Cap CSV rows for quick tests")
-    parser.add_argument("--chunk-size", type=int, default=1200, help="LangChain target chunk size (chars)")
-    parser.add_argument("--chunk-overlap", type=int, default=200, help="LangChain chunk overlap (chars)")
+    parser.add_argument("--chunk-tokens", type=int, default=500, help="Target tokens per chunk")
+    parser.add_argument("--chunk-overlap-tokens", type=int, default=50, help="Overlap tokens between chunks")
     parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose logging")
-    parser.add_argument("--skip-unstructured", action="store_true", help="Skip unstructured processing, use only fallback methods")
     parser.add_argument("--test-single", action="store_true", help="Test processing of just the first file found")
     args = parser.parse_args()
 
@@ -630,10 +719,6 @@ def main():
         logging.getLogger().setLevel(logging.DEBUG)
         logger.info("Verbose logging enabled")
 
-    # Handle unstructured skipping
-    if args.skip_unstructured:
-        logger.info("Skipping unstructured processing as requested - using only fallback methods")
-        UNSTRUCTURED_AVAILABLE = False
 
     input_path = Path(args.input)
     out_path = Path(args.out)
@@ -641,13 +726,12 @@ def main():
     logger.info(f"Input path: {input_path}")
     logger.info(f"Output path: {out_path}")
 
-    cfg = SplitterConfig(target_chunk_size=args.chunk_size, chunk_overlap=args.chunk_overlap)
+    cfg = SplitterConfig(target_chunk_tokens=args.chunk_tokens, chunk_overlap_tokens=args.chunk_overlap_tokens)
     logger.info(f"Using chunking config: {cfg}")
 
     all_chunks: List[Chunk] = []
 
     if input_path.is_dir():
-        logger.info(f"Processing directory: {input_path}")
         files = list(sorted(input_path.rglob("*")))
         logger.info(f"Found {len(files)} total items in directory")
         
@@ -658,16 +742,10 @@ def main():
         
         for i, p in enumerate(files):
             if p.is_file():
-                logger.info(f"Processing file {i+1}/{len(files)}: {p.name}")
                 try:
                     layer1 = extract_layer1(p, max_csv_rows=args.max_csv_rows)
-                    logger.info(f"Layer 1 complete for {p.name}: {len(layer1)} chunks")
-                    
                     layer2 = split_text_payloads(layer1, cfg)
-                    logger.info(f"Layer 2 complete for {p.name}: {len(layer2)} chunks")
-                    
                     all_chunks.extend(layer2)
-                    logger.info(f"Total chunks so far: {len(all_chunks)}")
                     
                     # Exit after first file if testing
                     if args.test_single:
@@ -681,12 +759,8 @@ def main():
                         break
                     continue
     else:
-        logger.info(f"Processing single file: {input_path}")
         layer1 = extract_layer1(input_path, max_csv_rows=args.max_csv_rows)
-        logger.info(f"Layer 1 complete: {len(layer1)} chunks")
-        
         layer2 = split_text_payloads(layer1, cfg)
-        logger.info(f"Layer 2 complete: {len(layer2)} chunks")
         
         all_chunks.extend(layer2)
 
@@ -710,24 +784,23 @@ if __name__ == "__main__":
         try:
             logger.info("Testing basic imports...")
             import pandas as pd
-            logger.info("✓ pandas imported successfully")
-            
-            from bs4 import BeautifulSoup
-            logger.info("✓ BeautifulSoup imported successfully")
+            logger.info("pandas imported successfully")
             
             from langchain_text_splitters import RecursiveCharacterTextSplitter
-            logger.info("✓ LangChain splitters imported successfully")
+            logger.info("LangChain splitters imported successfully")
             
             logger.info("Testing unstructured import...")
-            if safe_init_unstructured():
-                logger.info("✓ unstructured library initialized successfully")
+            if init_unstructured():
+                logger.info("unstructured library initialized successfully")
             else:
-                logger.info("✗ unstructured library failed to initialize")
+                logger.info("unstructured library failed to initialize")
             
             logger.info("All import tests completed")
             
         except Exception as e:
             logger.error(f"Import test failed: {e}")
+            import traceback
+            logger.error(f"Full traceback: {traceback.format_exc()}")
             sys.exit(1)
     else:
         main()

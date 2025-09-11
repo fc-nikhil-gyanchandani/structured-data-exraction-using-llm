@@ -21,6 +21,7 @@ class FieldSpec:
     normalize: Optional[str] = None
     hints: Optional[List[str]] = None
     examples: Optional[List[str]] = None
+    extraction_rules: Optional[List[str]] = None
     units: Optional[str] = None
     notes: Optional[str] = None
 
@@ -33,6 +34,10 @@ class ModelSpec:
     primary_key: List[str]
     key_fields: List[str]
     fields: List[FieldSpec]
+    domain_context: Optional[str] = None
+    extraction_perspective: Optional[str] = None
+    business_rules: Optional[List[str]] = None
+    record_grouping_logic: Optional[str] = None
     constraints: Optional[List[Dict[str, Any]]] = None
     ingestion_gate: Optional[Dict[str, Any]] = None
     evidence_rules: Optional[Dict[str, Any]] = None
@@ -66,6 +71,10 @@ def load_dictionary(yaml_path: str) -> DataDictionary:
             primary_key=model_data.get('primary_key', []),
             key_fields=model_data.get('key_fields', []),
             fields=fields,
+            domain_context=model_data.get('domain_context', ''),
+            extraction_perspective=model_data.get('extraction_perspective', ''),
+            business_rules=model_data.get('business_rules', []),
+            record_grouping_logic=model_data.get('record_grouping_logic', ''),
             constraints=model_data.get('constraints', []),
             ingestion_gate=model_data.get('ingestion_gate', {}),
             evidence_rules=model_data.get('evidence_rules', {}),
