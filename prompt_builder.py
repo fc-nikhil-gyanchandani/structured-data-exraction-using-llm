@@ -27,6 +27,8 @@ class PromptBuilder:
         evidence_mode: str = "comprehensive"
     ):
         self.model_name = model_name
+        # Store the full data dictionary for inclusion in prompts
+        self.full_data_dict = data_dict
         # Pull the model block once
         self.model_spec: Dict[str, Any] = data_dict.get("models", {}).get(model_name, {})
         self.fields: List[Dict[str, Any]] = self.model_spec.get("fields", [])
@@ -126,23 +128,22 @@ class PromptBuilder:
         return {
             'system_extraction': """You are a schema-driven extraction model. Extract ONLY from provided chunks. 
 Never invent or use outside knowledge. If a field is not explicitly supported 
-by evidence, set that field to null (but include the field key). Output strict JSON only 
+by the data, set that field to null (but include the field key). Output strict JSON only 
 (no markdown, no commentary).
 
 Quality contracts:
 - No hallucinations.
 - Obey the provided JSON Schema exactly.
-- For every non-null field include relevant evidence objects with the shape 
-{chunk_id, snippet} where snippet is a ≤120 char direct quote.
+- Extract only the required fields as specified in the schema.
 - If constraints appear violated, still return the best structured result and add a note in top-level 'notes'.""",
             
             'system_validation': """You are a validation model that checks whether extracted records follow the rules and schema.
 Analyze the provided record against the data dictionary and evidence, then return validation results.""",
             
             'developer_validation': """Validation rules:
-1) Each non-null field must contain valid evidence supporting the extraction
+1) Each non-null field must be valid according to the schema
 2) Check field types, constraints, and business rules
-3) Verify evidence quality and relevance""",
+3) Verify data quality and consistency""",
             
             'user_extraction': """{
   "data_dictionary": {DATA_DICTIONARY_PLACEHOLDER},
@@ -313,7 +314,47 @@ Analyze the provided record against the data dictionary and evidence, then retur
         return "\n".join(field_descriptions)
 
     def _data_dictionary_block(self) -> Dict[str, Any]:
-        """Build the complete data dictionary block."""
+        """Build the data dictionary block based on task type and context."""
+        # Get the full data dictionary from the original data_dict
+        full_data_dict = getattr(self, 'full_data_dict', {})
+        
+        # For extraction and validation tasks, include only the specific model being processed
+        if self.task_type in ["extraction", "validation"]:
+            return {
+                "model": self.model_name,
+                "description": self.model_spec.get("description", "N/A"),
+                "domain_context": self.model_spec.get("domain_context", ""),
+                "extraction_perspective": self.model_spec.get("extraction_perspective", ""),
+                "primary_key": self.model_spec.get("primary_key", []),
+                "key_fields": self.model_spec.get("key_fields", []),
+                "fields": {
+                    f["name"]: {
+                        "type": f.get("dtype", "string"),
+                        "description": f.get("description", ""),
+                        "hints": f.get("hints", []),
+                        "required": bool(f.get("required", False)),
+                        "extraction_rules": f.get("extraction_rules", []),
+                        "validation_patterns": f.get("regex", ""),
+                        "examples": f.get("examples", []),
+                        "normalize": f.get("normalize", ""),
+                        "enum": f.get("enum", []),
+                        "range": f.get("range", []),
+                        "units": f.get("units", ""),
+                        "notes": f.get("notes", "")
+                    } for f in self.fields
+                },
+                "business_rules": self.model_spec.get("business_rules", []),
+                "record_grouping_logic": self.model_spec.get("record_grouping_logic", ""),
+                "document_context": self.model_spec.get("document_context", {}),
+                "extraction_focus": self.model_spec.get("extraction_focus", []),
+                "source_path_filter": self.model_spec.get("source_path_filter", [])
+            }
+        
+        # For classifier/mapper tasks, include the complete data dictionary for model selection
+        if full_data_dict:
+            return full_data_dict
+        
+        # Fallback to the current model-specific approach
         return {
             "model": self.model_name,
             "description": self.model_spec.get("description", "N/A"),
@@ -384,7 +425,8 @@ Analyze the provided record against the data dictionary and evidence, then retur
             '{CHUNKS_PLACEHOLDER}': json.dumps(self.chunks, ensure_ascii=False),
             '{INSTRUCTIONS_PLACEHOLDER}': json.dumps(self.extra_instructions or [
                 "Analyze ALL provided chunks in this batch.",
-                f"Include {'comprehensive' if self.evidence_mode == 'comprehensive' else 'minimal'} evidence snippets.",
+                "Extract only the fields specified in the JSON schema.",
+                "Ensure all required fields are present in each record.",
             ], ensure_ascii=False),
             '{MODEL_NAME_PLACEHOLDER}': json.dumps(self.model_name, ensure_ascii=False),
             '{DESCRIPTION_PLACEHOLDER}': json.dumps(self.model_spec.get("description", "N/A"), ensure_ascii=False),
@@ -428,6 +470,116 @@ Analyze the provided record against the data dictionary and evidence, then retur
         if self.task_type == "validation":
             return self.build_validation_prompt()
         return self.build_extraction_prompt()
+    
+    def build_classifier_prompt(self, file_chunks: List[Dict[str, Any]], max_tokens: int = 100000) -> str:
+        """
+        Build prompt for classifier/mapper agent.
+        Includes complete data dictionary for model selection.
+        """
+        # Load mapper template
+        mapper_template = self._get_template("mapper")
+        
+        # Include complete data dictionary for model selection
+        dictionary_str = json.dumps(self.full_data_dict, indent=2)
+        
+        # Build base prompt
+        base_prompt = mapper_template.format(
+            DATA_DICTIONARY=dictionary_str,
+            FILE_CHUNK=""  # Placeholder for chunks
+        )
+        
+        # Calculate available tokens for chunks
+        base_tokens = self._estimate_tokens(base_prompt)
+        available_tokens_for_chunks = max_tokens - base_tokens
+        
+        # Add chunks until token limit is reached
+        final_chunks_str = ""
+        included_chunks_count = 0
+        for chunk in file_chunks:
+            chunk_str = f"--- Chunk ID: {chunk.get('chunk_id', 'N/A')} ---\n{chunk.get('text', '')}\n\n"
+            chunk_tokens = self._estimate_tokens(chunk_str)
+            
+            if available_tokens_for_chunks - chunk_tokens > 0:
+                final_chunks_str += chunk_str
+                available_tokens_for_chunks -= chunk_tokens
+                included_chunks_count += 1
+            else:
+                print(f"Warning: Truncating chunks for classifier prompt. "
+                      f"Included {included_chunks_count}/{len(file_chunks)} chunks to fit within {max_tokens} tokens.")
+                break
+        
+        return base_prompt.replace("{FILE_CHUNK}", final_chunks_str)
+    
+    def build_extraction_prompt_for_model(self, model_name: str, file_chunks: List[Dict[str, Any]], 
+                                        json_schema: Dict[str, Any], max_tokens: int = 100000) -> List[Dict[str, str]]:
+        """
+        Build prompt for extraction agent for a specific model.
+        Includes only the specific model's data dictionary.
+        """
+        # Get the specific model's specification
+        model_spec = self.full_data_dict.get("models", {}).get(model_name, {})
+        if not model_spec:
+            raise ValueError(f"Model '{model_name}' not found in data dictionary")
+        
+        # Create a new instance for this specific model
+        model_builder = PromptBuilder(
+            model_name=model_name,
+            data_dict=self.full_data_dict,
+            task_type="extraction",
+            templates_dir=self.templates_dir,
+            evidence_mode=self.evidence_mode
+        )
+        
+        # Add chunks
+        model_builder.add_chunks(file_chunks)
+        
+        # Set JSON schema
+        model_builder.set_json_schema_for_response(json_schema)
+        
+        # Build the prompt
+        return model_builder.build_prompt()
+    
+    def build_validation_prompt_for_model(self, model_name: str, record: Dict[str, Any], 
+                                        evidence_pack: Dict[str, List[Dict[str, Any]]], 
+                                        max_tokens: int = 100000) -> List[Dict[str, str]]:
+        """
+        Build prompt for validation agent for a specific model.
+        Includes only the specific model's data dictionary.
+        """
+        # Get the specific model's specification
+        model_spec = self.full_data_dict.get("models", {}).get(model_name, {})
+        if not model_spec:
+            raise ValueError(f"Model '{model_name}' not found in data dictionary")
+        
+        # Create a new instance for this specific model
+        model_builder = PromptBuilder(
+            model_name=model_name,
+            data_dict=self.full_data_dict,
+            task_type="validation",
+            templates_dir=self.templates_dir,
+            evidence_mode=self.evidence_mode
+        )
+        
+        # Set validation data
+        model_builder.set_record(record)
+        model_builder.set_evidence_pack(evidence_pack)
+        
+        # Build the prompt
+        return model_builder.build_prompt()
+    
+    def _get_template(self, template_name: str) -> str:
+        """Load a prompt template from file."""
+        template_file = os.path.join(self.templates_dir, f'{template_name}.txt')
+        if os.path.exists(template_file):
+            with open(template_file, 'r', encoding='utf-8') as f:
+                return f.read()
+        else:
+            raise FileNotFoundError(f"Template not found: {template_file}")
+    
+    def _estimate_tokens(self, text: str) -> int:
+        """Roughly estimate the number of tokens for a given string."""
+        # Simple estimation: approximately 4 characters per token
+        return len(text) // 4
 
     # ---------------------------
     # Extraction

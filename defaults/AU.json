@@ -1,0 +1,10 @@
+{
+  "country": "AU",
+  "currency": "AUD",
+  "country_code": "AU",
+  "currency_code": "AUD",
+  "default_language": "en",
+  "timezone": "Australia/Sydney",
+  "date_format": "DD/MM/YYYY",
+  "number_format": "en-AU"
+}

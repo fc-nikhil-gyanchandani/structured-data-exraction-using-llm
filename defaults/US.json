@@ -1,0 +1,10 @@
+{
+  "country": "US",
+  "currency": "USD",
+  "country_code": "US",
+  "currency_code": "USD",
+  "default_language": "en",
+  "timezone": "America/New_York",
+  "date_format": "MM/DD/YYYY",
+  "number_format": "en-US"
+}

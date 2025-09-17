@@ -1,0 +1,1825 @@
+You are a Senior Customs Data Analysis Specialist. Analyze customs/trade data files and map them to predefined database tables. Return mappings in JSON format only. Be precise, systematic, and conservative with confidence scores.
+
+DATA DICTIONARY:
+{
+  "version": 0.1,
+  "defaults": {
+    "evidence_required": 1,
+    "mean_confidence_min": 0.8,
+    "source_path_filter": null
+  },
+  "models": {
+    "countries_stg": {
+      "description": "Master list of countries with ISO 3166-1 alpha-2 codes (staging)",
+      "domain_context": "Landed Cost Calculation",
+      "extraction_perspective": "Senior Customs Agent: Extracting country information to determine applicable trade regulations, restrictions, and required documentation for imported goods.",
+      "primary_key": [
+        "iso2"
+      ],
+      "key_fields": [
+        "iso2"
+      ],
+      "fields": [
+        {
+          "name": "iso2",
+          "dtype": "string",
+          "required": true,
+          "regex": "^[A-Z]{2}$",
+          "normalize": "upper",
+          "hints": [
+            "ISO 3166-1 alpha-2",
+            "Country Code",
+            "ISO2",
+            "Alpha-2"
+          ],
+          "examples": [
+            "AF",
+            "AD",
+            "AO",
+            "AG",
+            "AR",
+            "AM",
+            "AU",
+            "AT",
+            "AL",
+            "DZ"
+          ],
+          "extraction_rules": [
+            "The field must match exactly two uppercase characters",
+            "If similar codes appear, prioritize those listed with 'Country Code' or 'ISO2' headings",
+            "Extract only valid ISO2 codes that exist in the official ISO registry"
+          ]
+        },
+        {
+          "name": "name",
+          "dtype": "string",
+          "required": true,
+          "normalize": "collapse_whitespace",
+          "hints": [
+            "Country",
+            "Country Name",
+            "Name"
+          ],
+          "examples": [
+            "Afghanistan",
+            "Andorra",
+            "Angola",
+            "Antigua and Barbuda",
+            "Argentina"
+          ],
+          "extraction_rules": [
+            "Extract the complete, official country name",
+            "Remove any leading or trailing whitespace during extraction",
+            "Account for variations in naming conventions (e.g., 'The Republic of...')",
+            "Ensure it aligns with the extracted ISO2 code"
+          ]
+        }
+      ],
+      "business_rules": [
+        "iso2 must be a valid ISO 3166-1 alpha-2 code. Represents a valid country for landed cost calculations.",
+        "name must not be empty. Ensures valid country name for landed cost calculation"
+      ],
+      "record_grouping_logic": "Each unique iso2 code represents one distinct record.",
+      "ingestion_gate": {
+        "binary_rules": [
+          "required_fields_present",
+          "no_constraint_violations"
+        ],
+        "quality_thresholds": {
+          "coverage_min": 1.0,
+          "mean_confidence_min": 0.95
+        }
+      },
+      "evidence_rules": {
+        "min_spans_per_field": 1,
+        "require_page_numbers": true
+      }
+    },
+    "currencies_stg": {
+      "description": "Master list of currencies with ISO 4217 codes (staging)",
+      "domain_context": "Landed Cost Calculation",
+      "extraction_perspective": "Senior Customs Agent: Extracting currency information to determine applicable currency and conversion rates for duty and tax calculations.",
+      "primary_key": [
+        "code"
+      ],
+      "key_fields": [
+        "code"
+      ],
+      "fields": [
+        {
+          "name": "code",
+          "dtype": "string",
+          "required": true,
+          "regex": "^[A-Z]{3}$",
+          "normalize": "upper",
+          "hints": [
+            "ISO 4217 code",
+            "Currency Code",
+            "Code"
+          ],
+          "examples": [
+            "AFN",
+            "ALL",
+            "DZD",
+            "EUR",
+            "AOA",
+            "XCD",
+            "ARS",
+            "AMD",
+            "AUD",
+            "AZN"
+          ],
+          "extraction_rules": [
+            "The field must match exactly three uppercase characters",
+            "Prioritize codes listed with 'Currency Code' or 'ISO 4217 code' headings",
+            "Extract only valid ISO 4217 currency codes"
+          ]
+        },
+        {
+          "name": "name",
+          "dtype": "string",
+          "required": true,
+          "normalize": "collapse_whitespace",
+          "hints": [
+            "Currency",
+            "Currency Name",
+            "Name"
+          ],
+          "examples": [
+            "Afghan Afghani",
+            "Albanian Lek",
+            "Algerian Dinar",
+            "Euro",
+            "Angolan Kwanza"
+          ],
+          "extraction_rules": [
+            "Extract the complete, official currency name",
+            "Remove any leading or trailing whitespace during extraction",
+            "Ensure alignment with the extracted currency code"
+          ]
+        }
+      ],
+      "business_rules": [
+        "code must be a valid ISO 4217 currency code. Ensures correct currency for landed cost calculations.",
+        "name must not be empty. Provides the currency name for reporting and validation"
+      ],
+      "record_grouping_logic": "Each unique currency code represents one distinct record.",
+      "ingestion_gate": {
+        "binary_rules": [
+          "required_fields_present",
+          "no_constraint_violations"
+        ],
+        "quality_thresholds": {
+          "coverage_min": 1.0,
+          "mean_confidence_min": 0.95
+        }
+      },
+      "evidence_rules": {
+        "min_spans_per_field": 1,
+        "require_page_numbers": true
+      }
+    },
+    "provinces_stg": {
+      "description": "Province/state-level administrative divisions linked to countries (staging)",
+      "domain_context": "Landed Cost Calculation",
+      "extraction_perspective": "Senior Customs Agent: Extracting province/state information to determine applicable regional taxes and regulations for imported goods within a specific country.",
+      "primary_key": [
+        "country_iso",
+        "province_code"
+      ],
+      "key_fields": [
+        "province_code",
+        "country_iso"
+      ],
+      "fields": [
+        {
+          "name": "country_iso",
+          "dtype": "string",
+          "required": true,
+          "regex": "^[A-Z]{2}$",
+          "normalize": "upper",
+          "hints": [
+            "Country",
+            "Country ISO",
+            "ISO2"
+          ],
+          "examples": [
+            "US",
+            "CA",
+            "MX",
+            "GB",
+            "DE",
+            "FR",
+            "JP",
+            "AU"
+          ],
+          "extraction_rules": [
+            "Field must match exactly two uppercase characters.",
+            "Must be a valid ISO 3166-1 alpha-2 country code."
+          ]
+        },
+        {
+          "name": "province_code",
+          "dtype": "string",
+          "required": true,
+          "regex": "^[A-Z]{2}$",
+          "normalize": "upper",
+          "hints": [
+            "Province Code",
+            "State Code",
+            "Subdivision code"
+          ],
+          "examples": [
+            "AB",
+            "MB",
+            "ON",
+            "QC",
+            "NB",
+            "BC",
+            "SK",
+            "NL",
+            "NS",
+            "PE"
+          ],
+          "extraction_rules": [
+            "Field must match exactly two uppercase characters.",
+            "Must be a valid province/state code for the given country."
+          ]
+        },
+        {
+          "name": "name",
+          "dtype": "string",
+          "required": true,
+          "normalize": "collapse_whitespace",
+          "hints": [
+            "Province Name",
+            "State Name",
+            "Subdivision"
+          ],
+          "examples": [
+            "Alberta",
+            "Manitoba",
+            "Ontario",
+            "Quebec",
+            "New Brunswick"
+          ],
+          "extraction_rules": [
+            "Extract the complete province/state name.",
+            "Remove any leading or trailing whitespace.",
+            "Ensure it aligns with the extracted province_code and country_iso."
+          ]
+        }
+      ],
+      "business_rules": [
+        "country_iso must be a valid ISO 3166-1 alpha-2 code. Ensures correct country context.",
+        "province_code must be a valid code for the given country_iso. Ensures correct regional tax application.",
+        "name must not be empty. Provides the province/state name for tax calculation and validation."
+      ],
+      "record_grouping_logic": "Each unique combination of country_iso and province_code represents one distinct record.",
+      "ingestion_gate": {
+        "binary_rules": [
+          "required_fields_present",
+          "no_constraint_violations"
+        ],
+        "quality_thresholds": {
+          "coverage_min": 1.0,
+          "mean_confidence_min": 0.95
+        }
+      },
+      "evidence_rules": {
+        "min_spans_per_field": 1,
+        "require_page_numbers": true
+      }
+    },
+    "hs_codes_stg": {
+      "description": "Harmonized System (HS) codes with short descriptions (staging)",
+      "domain_context": "Landed Cost Calculation",
+      "extraction_perspective": "Senior Customs Agent: Extracting HS codes to determine applicable tariff rates, trade regulations, and import/export restrictions for specific goods.",
+      "primary_key": [
+        "hs_code"
+      ],
+      "key_fields": [
+        "hs_code"
+      ],
+      "fields": [
+        {
+          "name": "hs_code",
+          "dtype": "string",
+          "required": true,
+          "regex": "^[0-9]{6,10}$",
+          "normalize": "strip_leading_zeros",
+          "hints": [
+            "HS Code",
+            "Tariff Code",
+            "Customs Code",
+            "Harmonized Code"
+          ],
+          "examples": [
+            "0101210000",
+            "0102210090",
+            "0102290010",
+            "0102290090",
+            "0101290010"
+          ],
+          "extraction_rules": [
+            "Field must be a numeric string of 6 to 10 digits.",
+            "If leading zeros are present, strip them.",
+            "Verify against official HS code nomenclature if possible."
+          ]
+        },
+        {
+          "name": "description",
+          "dtype": "string",
+          "required": true,
+          "normalize": "collapse_whitespace",
+          "hints": [
+            "Description",
+            "Goods Description",
+            "HS Description"
+          ],
+          "examples": [
+            "Pure-bred breeding animals",
+            "Other",
+            "Dairy",
+            "For slaughter",
+            "For racing"
+          ],
+          "extraction_rules": [
+            "Extract the complete description of the goods associated with the HS code.",
+            "Remove any leading or trailing whitespace.",
+            "Ensure it aligns with the extracted HS code."
+          ]
+        }
+      ],
+      "business_rules": [
+        "hs_code must be a numeric string of 6 to 10 digits. Determines the correct tariff classification.",
+        "description must not be empty. Provides the description of the goods for customs declaration and validation."
+      ],
+      "record_grouping_logic": "Each unique hs_code represents one distinct record.",
+      "ingestion_gate": {
+        "binary_rules": [
+          "required_fields_present",
+          "no_constraint_violations"
+        ],
+        "quality_thresholds": {
+          "coverage_min": 1.0,
+          "mean_confidence_min": 0.95
+        }
+      },
+      "evidence_rules": {
+        "min_spans_per_field": 1,
+        "require_page_numbers": true
+      }
+    },
+    "tax_types_stg": {
+      "description": "Tax types applicable per country with flags for cascading and inclusion in price (staging)",
+      "domain_context": "Landed Cost Calculation",
+      "extraction_perspective": "Senior Customs Agent: Extracting tax type information to determine applicable taxes (e.g., GST, PST, VAT) on imported goods based on the destination country and regional regulations.",
+      "primary_key": [
+        "country_iso",
+        "tax_code"
+      ],
+      "key_fields": [
+        "country_iso",
+        "tax_code"
+      ],
+      "fields": [
+        {
+          "name": "country_iso",
+          "dtype": "string",
+          "required": true,
+          "regex": "^[A-Z]{2}$",
+          "normalize": "upper",
+          "hints": [
+            "Country ISO",
+            "Country",
+            "ISO2"
+          ],
+          "examples": [
+            "US",
+            "CA",
+            "MX",
+            "GB",
+            "DE",
+            "FR",
+            "JP",
+            "AU"
+          ],
+          "extraction_rules": [
+            "Field must match exactly two uppercase characters.",
+            "Must be a valid ISO 3166-1 alpha-2 country code."
+          ]
+        },
+        {
+          "name": "tax_code",
+          "dtype": "string",
+          "required": true,
+          "normalize": "upper",
+          "hints": [
+            "Tax Code",
+            "Short Code",
+            "Abbreviation"
+          ],
+          "examples": [
+            "GST",
+            "PST",
+            "QST",
+            "RST",
+            "HST"
+          ],
+          "extraction_rules": [
+            "Field should be in uppercase.",
+            "Must be a valid tax code for the given country."
+          ]
+        },
+        {
+          "name": "name",
+          "dtype": "string",
+          "required": true,
+          "normalize": "collapse_whitespace",
+          "hints": [
+            "Tax Name",
+            "Tax Type"
+          ],
+          "examples": [
+            "GST Tax",
+            "PST Tax",
+            "QST Tax"
+          ],
+          "extraction_rules": [
+            "Extract the complete tax name.",
+            "Remove any leading or trailing whitespace.",
+            "Ensure it aligns with the extracted tax code and country_iso."
+          ]
+        },
+        {
+          "name": "cascading_flag",
+          "dtype": "boolean",
+          "required": true,
+          "hints": [
+            "Cascading",
+            "Compound",
+            "Applied on top of other taxes"
+          ],
+          "examples": [
+            true,
+            false
+          ],
+          "extraction_rules": [
+            "Interpret values like 'Yes', 'True' as true; 'No', 'False' as false.",
+            "Indicates if the tax is applied on top of other taxes."
+          ]
+        },
+        {
+          "name": "included_in_price",
+          "dtype": "boolean",
+          "required": true,
+          "hints": [
+            "Included in Price",
+            "Embedded tax",
+            "Tax included?"
+          ],
+          "examples": [
+            true,
+            false
+          ],
+          "extraction_rules": [
+            "Interpret values like 'Yes', 'True' as true; 'No', 'False' as false.",
+            "Indicates if the tax is already included in the price of the goods."
+          ]
+        },
+        {
+          "name": "description",
+          "dtype": "string",
+          "required": false,
+          "normalize": "collapse_whitespace",
+          "hints": [
+            "Description",
+            "Details",
+            "Notes"
+          ],
+          "examples": [
+            "GST Tax",
+            "HST Tax",
+            "VAT Tax",
+            "Sales Tax",
+            "Value Added Tax"
+          ],
+          "extraction_rules": [
+            "Extract additional details about the tax type, if available.",
+            "Remove any leading or trailing whitespace."
+          ]
+        }
+      ],
+      "business_rules": [
+        "country_iso must be a valid ISO 3166-1 alpha-2 code. Ensures correct country context for tax calculation.",
+        "tax_code must be uppercase. Enforces consistency.",
+        "name must not be empty. Provides the tax name for accurate calculation."
+      ],
+      "record_grouping_logic": "Each unique combination of country_iso and tax_code represents one distinct tax type.",
+      "ingestion_gate": {
+        "binary_rules": [
+          "required_fields_present",
+          "no_constraint_violations"
+        ],
+        "quality_thresholds": {
+          "coverage_min": 1.0,
+          "mean_confidence_min": 0.95
+        }
+      },
+      "evidence_rules": {
+        "min_spans_per_field": 1,
+        "require_page_numbers": true
+      }
+    },
+    "province_tax_rates_stg": {
+      "description": "Province-level tax rates by tax type, including ad valorem (%) or fixed levy (staging)",
+      "domain_context": "Landed Cost Calculation",
+      "extraction_perspective": "Senior Customs Agent: Extracting province-level tax rates to accurately calculate regional taxes on imported goods, considering ad valorem percentages or fixed levies.",
+      "primary_key": [
+        "country_iso",
+        "province_code",
+        "tax_code"
+      ],
+      "key_fields": [
+        "province_code",
+        "tax_code"
+      ],
+      "fields": [
+        {
+          "name": "country_iso",
+          "dtype": "string",
+          "required": true,
+          "regex": "^[A-Z]{2}$",
+          "normalize": "upper",
+          "hints": [
+            "Country ISO",
+            "Country Code",
+            "ISO2"
+          ],
+          "examples": [
+            "US",
+            "CA",
+            "MX",
+            "GB",
+            "DE",
+            "FR",
+            "JP",
+            "AU"
+          ],
+          "extraction_rules": [
+            "Field must match exactly two uppercase characters.",
+            "Must be a valid ISO 3166-1 alpha-2 country code."
+          ]
+        },
+        {
+          "name": "province_code",
+          "dtype": "string",
+          "required": true,
+          "regex": "^[A-Z]{2}$",
+          "normalize": "upper",
+          "hints": [
+            "Province Code",
+            "Subdivision Code"
+          ],
+          "examples": [
+            "AB",
+            "BC",
+            "SK",
+            "QC",
+            "ON"
+          ],
+          "extraction_rules": [
+            "Field must match exactly two uppercase characters.",
+            "Must be a valid province/state code for the given country."
+          ]
+        },
+        {
+          "name": "tax_code",
+          "dtype": "string",
+          "required": true,
+          "regex": "^[A-Z]{2,10}$",
+          "normalize": "upper",
+          "hints": [
+            "Tax Code",
+            "Tax Type Code",
+            "Tax Abbreviation"
+          ],
+          "examples": [
+            "GST",
+            "PST",
+            "QST",
+            "RST",
+            "HST",
+            "VAT",
+            "SALES_TAX"
+          ],
+          "extraction_rules": [
+            "Field should be in uppercase.",
+            "Must be a valid tax code for the given country and province."
+          ]
+        },
+        {
+          "name": "rate_percent",
+          "dtype": "number",
+          "units": "percent",
+          "required": false,
+          "range": [
+            0,
+            100
+          ],
+          "normalize": "percent_to_fraction",
+          "hints": [
+            "Tax Rate",
+            "Percentage rate"
+          ],
+          "examples": [
+            "5.000",
+            "7.000",
+            "13.000",
+            "15.000",
+            "9.975"
+          ],
+          "extraction_rules": [
+            "Value must be a number between 0 and 100.",
+            "If the value is expressed as a percentage (e.g., 5.000), convert it to a fraction (0.05)."
+          ]
+        },
+        {
+          "name": "fixed_amount",
+          "dtype": "number",
+          "units": "currency",
+          "required": false,
+          "range": [
+            0,
+            1000000
+          ],
+          "hints": [
+            "Fixed levy",
+            "Flat tax amount"
+          ],
+          "examples": [
+            "0"
+          ],
+          "extraction_rules": [
+            "Value must be a number between 0 and 1,000,000.",
+            "Represents a fixed tax amount."
+          ]
+        },
+        {
+          "name": "currency_code",
+          "dtype": "string",
+          "required": true,
+          "regex": "^[A-Z]{3}$",
+          "normalize": "upper",
+          "hints": [
+            "Currency",
+            "ISO 4217 code"
+          ],
+          "examples": [
+            "USD",
+            "CAD",
+            "EUR",
+            "GBP",
+            "JPY",
+            "AUD"
+          ],
+          "extraction_rules": [
+            "Field must match exactly three uppercase characters.",
+            "Must be a valid ISO 4217 currency code."
+          ]
+        }
+      ],
+      "business_rules": [
+        "country_iso must be a valid ISO 3166-1 alpha-2 code. Ensures correct country context for tax calculation.",
+        "province_code must be a valid code for the given country_iso. Ensures correct regional tax application.",
+        "tax_code must be a valid tax code for the given country and province. Ensures correct tax type is applied",
+        "currency_code must be appropriate for the given country_iso.",
+        "Either rate_percent or fixed_amount must be greater than 0, not both.",
+        "fixed_amount cannot be negative."
+      ],
+      "record_grouping_logic": "Each unique combination of country_iso, province_code, and tax_code represents one distinct tax rate.",
+      "ingestion_gate": {
+        "binary_rules": [
+          "required_fields_present",
+          "no_constraint_violations"
+        ],
+        "quality_thresholds": {
+          "coverage_min": 1.0,
+          "mean_confidence_min": 0.95
+        }
+      },
+      "evidence_rules": {
+        "min_spans_per_field": 1,
+        "require_page_numbers": true
+      }
+    },
+    "treatments_stg": {
+      "description": "Destination-country tariff treatments/programs with legal basis, preference type, and quota flag (staging)",
+      "domain_context": "Landed Cost Calculation",
+      "extraction_perspective": "Senior Customs Agent: Extracting tariff treatment information to determine applicable preferential duties or trade programs based on the origin and destination of goods.",
+      "primary_key": [
+        "destination_country_iso",
+        "treatment_code"
+      ],
+      "key_fields": [
+        "treatment_code"
+      ],
+      "fields": [
+        {
+          "name": "destination_country_iso",
+          "dtype": "string",
+          "required": true,
+          "regex": "^[A-Z]{2}$",
+          "normalize": "upper",
+          "hints": [
+            "Destination Country ISO2",
+            "Country",
+            "ISO"
+          ],
+          "examples": [
+            "US",
+            "CA",
+            "MX",
+            "GB",
+            "DE",
+            "FR",
+            "JP",
+            "AU"
+          ],
+          "extraction_rules": [
+            "Field must match exactly two uppercase characters.",
+            "Must be a valid ISO 3166-1 alpha-2 country code."
+          ]
+        },
+        {
+          "name": "treatment_code",
+          "dtype": "string",
+          "required": true,
+          "regex": "^[A-Z]{2,5}$",
+          "normalize": "upper",
+          "hints": [
+            "Treatment Code",
+            "Tariff Treatment Code",
+            "Program code"
+          ],
+          "examples": [
+            "MFN",
+            "CPTPT",
+            "UKT",
+            "NZT",
+            "KRT",
+            "CIAT",
+            "UAT",
+            "JT",
+            "PAT",
+            "CCCT",
+            "AUT",
+            "IT",
+            "NT",
+            "MXT"
+          ],
+          "extraction_rules": [
+            "Field must be 2 to 5 uppercase characters.",
+            "Must be a valid tariff treatment code."
+          ]
+        },
+        {
+          "name": "name",
+          "dtype": "string",
+          "required": true,
+          "normalize": "collapse_whitespace",
+          "hints": [
+            "Treatment Name",
+            "Tariff program name"
+          ],
+          "examples": [
+            "Most-Favoured-Nation",
+            "CPTPP Tariff",
+            "United Kingdom Tariff",
+            "Korea Tariff"
+          ],
+          "extraction_rules": [
+            "Extract the complete name of the tariff treatment.",
+            "Remove any leading or trailing whitespace.",
+            "Ensure it aligns with the extracted treatment_code."
+          ]
+        },
+        {
+          "name": "legal_basis",
+          "dtype": "string",
+          "required": false,
+          "normalize": "collapse_whitespace",
+          "hints": [
+            "Agreement",
+            "Act/Regulation",
+            "FTA name",
+            "Legal citation"
+          ],
+          "examples": [
+            "World Trade Organization Agreement",
+            "USMCA Agreement",
+            "EU Trade Agreement",
+            "ASEAN Trade Agreement"
+          ],
+          "extraction_rules": [
+            "Extract the legal basis or agreement for the tariff treatment, if available.",
+            "Remove any leading or trailing whitespace."
+          ]
+        },
+        {
+          "name": "preference_type",
+          "dtype": "string",
+          "required": false,
+          "normalize": "title",
+          "hints": [
+            "Preference type",
+            "Tariff class"
+          ],
+          "examples": [
+            "Preferential",
+            "Standard",
+            "Other",
+            "Free Trade",
+            "Most Favored Nation"
+          ],
+          "extraction_rules": [
+            "Extract the preference type or tariff class.",
+            "Normalize to Title Case."
+          ]
+        },
+        {
+          "name": "quota_flag",
+          "dtype": "boolean",
+          "required": true,
+          "hints": [
+            "Quota applicable?",
+            "Subject to quota"
+          ],
+          "examples": [
+            false
+          ],
+          "extraction_rules": [
+            "Interpret values like 'Yes', 'True' as true; 'No', 'False' as false.",
+            "Indicates whether the tariff treatment is subject to a quota."
+          ]
+        }
+      ],
+      "business_rules": [
+        "destination_country_iso must be a valid ISO 3166-1 alpha-2 code. Ensures correct destination for tariff treatment application.",
+        "treatment_code must be uppercase. Enforces consistency.",
+        "name must not be empty. Provides the tariff treatment name for accurate calculation.",
+        "preference_type, if not null, must be a valid preference type classification"
+      ],
+      "record_grouping_logic": "Each unique combination of destination_country_iso and treatment_code represents one distinct tariff treatment.",
+      "ingestion_gate": {
+        "binary_rules": [
+          "required_fields_present",
+          "no_constraint_violations"
+        ],
+        "quality_thresholds": {
+          "coverage_min": 1.0,
+          "mean_confidence_min": 0.95
+        }
+      },
+      "evidence_rules": {
+        "min_spans_per_field": 1,
+        "require_page_numbers": true
+      }
+    },
+    "origin_groups_stg": {
+      "description": "Defines origin groups linked to tariff treatments and countries (staging)",
+      "domain_context": "Landed Cost Calculation",
+      "extraction_perspective": "Senior Customs Agent: Extracting origin group information to determine applicable tariff treatments based on the country or region of origin for imported goods.",
+      "primary_key": [
+        "treatment_code",
+        "origin_group_code"
+      ],
+      "key_fields": [
+        "treatment_code",
+        "origin_group_code"
+      ],
+      "fields": [
+        {
+          "name": "treatment_code",
+          "dtype": "string",
+          "required": true,
+          "normalize": "upper",
+          "hints": [
+            "Treatment Code",
+            "Tariff Treatment",
+            "Program code"
+          ],
+          "examples": [
+            "MFN",
+            "CPTPT",
+            "UKT",
+            "NZT",
+            "KRT",
+            "CIAT"
+          ],
+          "extraction_rules": [
+            "Field must be a valid treatment code from the treatments_stg model.",
+            "Must be in uppercase."
+          ]
+        },
+        {
+          "name": "origin_group_code",
+          "dtype": "string",
+          "required": true,
+          "normalize": "upper",
+          "hints": [
+            "Origin Group Code",
+            "Origin group identifier"
+          ],
+          "examples": [
+            "MFN",
+            "CPTPT",
+            "UKT",
+            "NZT",
+            "KRT",
+            "CIAT"
+          ],
+          "extraction_rules": [
+            "Field must be a valid origin group code.",
+            "Must be in uppercase.",
+            "Should match the treatment code in staging."
+          ]
+        },
+        {
+          "name": "origin_iso2",
+          "dtype": "string",
+          "required": false,
+          "regex": "^[A-Z]{2}$",
+          "normalize": "upper",
+          "hints": [
+            "Origin Country ISO2",
+            "Country Code",
+            "ISO code of origin"
+          ],
+          "examples": [
+            "US",
+            "MX",
+            "CN"
+          ],
+          "notes": "Blank when group is regional or abstract (e.g., LIST, CPTPT)",
+          "extraction_rules": [
+            "If present, must be a valid ISO 3166-1 alpha-2 country code.",
+            "Must be in uppercase.",
+            "Leave blank for regional or abstract origin groups."
+          ]
+        },
+        {
+          "name": "name",
+          "dtype": "string",
+          "required": true,
+          "normalize": "collapse_whitespace",
+          "hints": [
+            "Origin Group Name",
+            "Description"
+          ],
+          "examples": [
+            "MFN Origin Group",
+            "UKT Origin Group",
+            "NZT Origin Group"
+          ],
+          "extraction_rules": [
+            "Extract the complete name or description of the origin group.",
+            "Remove any leading or trailing whitespace.",
+            "Ensure it aligns with the extracted origin_group_code."
+          ]
+        }
+      ],
+      "business_rules": [
+        "origin_group_code must match the treatment_code in staging.",
+        "origin_iso2 must be a valid ISO 3166-1 alpha-2 code if present",
+        "name must not be empty."
+      ],
+      "record_grouping_logic": "Each unique combination of treatment_code and origin_group_code represents one distinct origin group.",
+      "ingestion_gate": {
+        "binary_rules": [
+          "required_fields_present",
+          "no_constraint_violations"
+        ],
+        "quality_thresholds": {
+          "coverage_min": 1.0,
+          "mean_confidence_min": 0.95
+        }
+      },
+      "evidence_rules": {
+        "min_spans_per_field": 1,
+        "require_page_numbers": true
+      }
+    },
+    "country_origin_groups_stg": {
+      "description": "Maps an origin country (ISO2, country name, or placeholder) to an origin_group_code used in tariff/treatment logic (staging)",
+      "domain_context": "Landed Cost Calculation",
+      "extraction_perspective": "Senior Customs Agent: Mapping origin countries to specific origin groups for tariff/treatment logic. Handles ISO2 codes, full names, and placeholders.",
+      "primary_key": [
+        "country_iso",
+        "origin_group_code"
+      ],
+      "key_fields": [
+        "country_iso",
+        "origin_group_code"
+      ],
+      "fields": [
+        {
+          "name": "country_iso",
+          "dtype": "string",
+          "required": true,
+          "regex": "^[A-Z][A-Z \\-]{1,63}$",
+          "normalize": "upper",
+          "hints": [
+            "Origin Country",
+            "ISO2 or Country Name or Placeholder"
+          ],
+          "examples": [
+            "AF",
+            "AL",
+            "DZ",
+            "AMERICAN SAMOA",
+            "ANGUILLA",
+            "ARUBA",
+            "ASCENSION ISLAND",
+            "LIST"
+          ],
+          "extraction_rules": [
+            "Field can be an ISO2 code, a full country name, or a placeholder value.",
+            "Normalize to uppercase."
+          ]
+        },
+        {
+          "name": "origin_group_code",
+          "dtype": "string",
+          "required": true,
+          "regex": "^[A-Z][A-Z \\-]{1,49}$",
+          "normalize": "upper",
+          "hints": [
+            "Origin Group Code",
+            "Grouping used by treatments"
+          ],
+          "examples": [
+            "MFN",
+            "CCCT",
+            "CPTPT",
+            "CEUT",
+            "GENERAL TARIFF",
+            "OF",
+            "COUNTRIES",
+            "AND",
+            "LIST"
+          ],
+          "extraction_rules": [
+            "Field must be a valid origin group code.",
+            "Normalize to uppercase."
+          ]
+        }
+      ],
+      "business_rules": [
+        "country_iso must not be empty.",
+        "origin_group_code must not be empty.",
+        "if country_iso is ISO2 code, it exists in countries_stg",
+        "origin_group_code exists in origin_groups_stg."
+      ],
+      "record_grouping_logic": "Each unique combination of country_iso and origin_group_code represents one distinct mapping.",
+      "ingestion_gate": {
+        "binary_rules": [
+          "required_fields_present",
+          "no_constraint_violations"
+        ],
+        "quality_thresholds": {
+          "coverage_min": 1.0,
+          "mean_confidence_min": 0.95
+        }
+      },
+      "evidence_rules": {
+        "min_spans_per_field": 1,
+        "require_page_numbers": true
+      }
+    },
+    "treatment_eligibilities_stg": {
+      "description": "Mapping of destination countries to eligible treatments and origin groups, with certification and notes (staging)",
+      "domain_context": "Landed Cost Calculation",
+      "extraction_perspective": "Senior Customs Agent: Mapping destination countries to eligible treatments and origin groups, considering certification requirements and notes.",
+      "primary_key": [
+        "destination_country_iso",
+        "origin_group_code",
+        "treatment_code"
+      ],
+      "key_fields": [
+        "origin_group_code",
+        "treatment_code"
+      ],
+      "fields": [
+        {
+          "name": "destination_country_iso",
+          "dtype": "string",
+          "required": true,
+          "regex": "^[A-Z]{2}$",
+          "normalize": "upper",
+          "hints": [
+            "Destination Country",
+            "Country ISO2"
+          ],
+          "examples": [
+            "US",
+            "CA",
+            "MX",
+            "GB",
+            "DE",
+            "FR",
+            "JP",
+            "AU"
+          ],
+          "extraction_rules": [
+            "Field must be a valid ISO 3166-1 alpha-2 country code.",
+            "Normalize to uppercase."
+          ]
+        },
+        {
+          "name": "origin_group_code",
+          "dtype": "string",
+          "required": true,
+          "normalize": "upper",
+          "hints": [
+            "Origin Group Code",
+            "Group Code",
+            "Origin group identifier"
+          ],
+          "examples": [
+            "LIST",
+            "UKT",
+            "NZT",
+            "JT",
+            "KRT",
+            "CIAT"
+          ],
+          "extraction_rules": [
+            "Field must be a valid origin group code.",
+            "Normalize to uppercase."
+          ]
+        },
+        {
+          "name": "treatment_code",
+          "dtype": "string",
+          "required": true,
+          "normalize": "upper",
+          "hints": [
+            "Treatment Code",
+            "Tariff Treatment",
+            "Program code"
+          ],
+          "examples": [
+            "MFN",
+            "CPTPT",
+            "UKT",
+            "NZT",
+            "KRT",
+            "CIAT"
+          ],
+          "extraction_rules": [
+            "Field must be a valid treatment code.",
+            "Normalize to uppercase."
+          ]
+        },
+        {
+          "name": "cert_required",
+          "dtype": "boolean",
+          "required": true,
+          "hints": [
+            "Certificate required?",
+            "Proof of origin required"
+          ],
+          "examples": [
+            true,
+            false
+          ],
+          "extraction_rules": [
+            "Value must be a boolean value indicating whether a certificate of origin is required."
+          ]
+        },
+        {
+          "name": "notes",
+          "dtype": "string",
+          "required": false,
+          "normalize": "collapse_whitespace",
+          "hints": [
+            "Notes",
+            "Eligibility notes",
+            "Remarks"
+          ],
+          "examples": [
+            "Treatment eligibility for MFN",
+            "Treatment eligibility for UKT"
+          ],
+          "extraction_rules": [
+            "Extract any notes or remarks related to the treatment eligibility.",
+            "Remove leading/trailing whitespaces."
+          ]
+        }
+      ],
+      "business_rules": [
+        "destination_country_iso must be a valid ISO 3166-1 alpha-2 code.",
+        "origin_group_code must be in uppercase.",
+        "treatment_code must be in uppercase.",
+        "cert_required must be a boolean value.",
+        "notes can be optional"
+      ],
+      "record_grouping_logic": "Each unique combination of destination_country_iso, origin_group_code, and treatment_code represents one distinct treatment eligibility.",
+      "ingestion_gate": {
+        "binary_rules": [
+          "required_fields_present",
+          "no_constraint_violations"
+        ],
+        "quality_thresholds": {
+          "coverage_min": 1.0,
+          "mean_confidence_min": 0.95
+        }
+      },
+      "evidence_rules": {
+        "min_spans_per_field": 1,
+        "require_page_numbers": true
+      }
+    },
+    "duty_rates_stg": {
+      "description": "Duty rates by HS code, treatment, and origin group including ad valorem % and/or specific duties (staging)",
+      "domain_context": "Landed Cost Calculation",
+      "extraction_perspective": "Senior Customs Agent: Extracting duty rates based on HS code, treatment, and origin group, considering ad valorem percentages and/or specific duties.",
+      "primary_key": [
+        "destination_country_iso",
+        "origin_group_code",
+        "hs_code",
+        "treatment_code"
+      ],
+      "key_fields": [
+        "hs_code",
+        "treatment_code",
+        "origin_group_code"
+      ],
+      "fields": [
+        {
+          "name": "destination_country_iso",
+          "dtype": "string",
+          "required": true,
+          "regex": "^[A-Z]{2}$",
+          "normalize": "upper",
+          "hints": [
+            "Destination Country",
+            "Country ISO2"
+          ],
+          "examples": [
+            "US",
+            "CA",
+            "MX",
+            "GB",
+            "DE",
+            "FR",
+            "JP",
+            "AU"
+          ],
+          "extraction_rules": [
+            "Field must be a valid ISO 3166-1 alpha-2 country code.",
+            "Normalize to uppercase."
+          ]
+        },
+        {
+          "name": "origin_group_code",
+          "dtype": "string",
+          "required": true,
+          "normalize": "upper",
+          "hints": [
+            "Origin Group Code",
+            "Origin group identifier"
+          ],
+          "examples": [
+            "MFN",
+            "AUT",
+            "UST",
+            "MXT",
+            "CIAT",
+            "CT"
+          ],
+          "extraction_rules": [
+            "Field must be a valid origin group code.",
+            "Normalize to uppercase."
+          ]
+        },
+        {
+          "name": "hs_code",
+          "dtype": "string",
+          "required": true,
+          "regex": "^[0-9]{6,10}$",
+          "normalize": "strip_leading_zeros",
+          "hints": [
+            "HS Code",
+            "Tariff Code"
+          ],
+          "examples": [
+            "0101210000"
+          ],
+          "extraction_rules": [
+            "Field must be a numeric string of 6 to 10 digits.",
+            "Strip leading zeros."
+          ]
+        },
+        {
+          "name": "treatment_code",
+          "dtype": "string",
+          "required": true,
+          "normalize": "upper",
+          "hints": [
+            "Treatment Code",
+            "Tariff Treatment",
+            "Program code"
+          ],
+          "examples": [
+            "MFN",
+            "General Tariff",
+            "AUT",
+            "UST",
+            "MXT"
+          ],
+          "extraction_rules": [
+            "Field must be a valid treatment code.",
+            "Normalize to uppercase."
+          ]
+        },
+        {
+          "name": "ad_valorem_percent",
+          "dtype": "number",
+          "units": "percent",
+          "required": false,
+          "range": [
+            0,
+            100
+          ],
+          "hints": [
+            "Ad Valorem Duty",
+            "Duty %",
+            "Percentage rate"
+          ],
+          "examples": [
+            "0.0",
+            "35.0"
+          ],
+          "extraction_rules": [
+            "If present, must be a number between 0 and 100.",
+            "Represents the ad valorem duty rate as a percentage."
+          ]
+        },
+        {
+          "name": "specific_min",
+          "dtype": "number",
+          "units": "currency",
+          "required": false,
+          "range": [
+            0,
+            1000000
+          ],
+          "hints": [
+            "Specific duty minimum",
+            "Min duty amount"
+          ],
+          "examples": [
+            "0.0000"
+          ],
+          "extraction_rules": [
+            "If present, must be a number between 0 and 1,000,000.",
+            "Represents the minimum specific duty amount."
+          ]
+        },
+        {
+          "name": "specific_max",
+          "dtype": "number",
+          "units": "currency",
+          "required": false,
+          "range": [
+            0,
+            1000000
+          ],
+          "hints": [
+            "Specific duty maximum",
+            "Max duty amount"
+          ],
+          "examples": [
+            "0.0000"
+          ],
+          "extraction_rules": [
+            "If present, must be a number between 0 and 1,000,000.",
+            "Represents the maximum specific duty amount."
+          ]
+        },
+        {
+          "name": "currency_code",
+          "dtype": "string",
+          "required": false,
+          "regex": "^[A-Z]{3}$",
+          "normalize": "upper",
+          "hints": [
+            "Currency",
+            "ISO 4217 code"
+          ],
+          "examples": [
+            "USD",
+            "CAD",
+            "EUR",
+            "GBP",
+            "JPY",
+            "AUD"
+          ],
+          "extraction_rules": [
+            "If present, must be a valid ISO 4217 currency code.",
+            "Normalize to uppercase."
+          ]
+        },
+        {
+          "name": "unit_of_measure",
+          "dtype": "string",
+          "required": false,
+          "hints": [
+            "Unit of Measure",
+            "Basis unit (kg, L, piece)"
+          ],
+          "examples": [
+            "kg",
+            "unit"
+          ],
+          "extraction_rules": [
+            "If specific_min or specific_max are present, this field is required.",
+            "Indicates the unit of measure for the specific duty."
+          ]
+        }
+      ],
+      "business_rules": [
+        "hs_code must be a numeric string of 6 to 10 digits. Determines tariff classification.",
+        "ad_valorem_percent must be between 0 and 100 if present.",
+        "specific_min must be less than or equal to specific_max if both are present.",
+        "currency_code must be a valid ISO 4217 currency code if present.",
+        "unit_of_measure is required if specific_min or specific_max are present."
+      ],
+      "record_grouping_logic": "Each unique combination of destination_country_iso, origin_group_code, hs_code, and treatment_code represents a distinct duty rate.",
+      "ingestion_gate": {
+        "binary_rules": [
+          "required_fields_present",
+          "no_constraint_violations"
+        ],
+        "quality_thresholds": {
+          "coverage_min": 1.0,
+          "mean_confidence_min": 0.95
+        }
+      },
+      "evidence_rules": {
+        "min_spans_per_field": 1,
+        "require_page_numbers": true
+      }
+    },
+    "origin_bands_stg": {
+      "description": "Origin bands used for de-minimis and duty logic (staging)",
+      "domain_context": "Landed Cost Calculation",
+      "extraction_perspective": "Senior Customs Agent: Extracting origin band information used for applying de minimis thresholds and duty logic based on the origin of goods.",
+      "primary_key": [
+        "band_code"
+      ],
+      "key_fields": [
+        "band_code"
+      ],
+      "fields": [
+        {
+          "name": "band_code",
+          "dtype": "string",
+          "required": true,
+          "regex": "^[A-Z0-9_\\-]{2,20}$",
+          "normalize": "upper",
+          "hints": [
+            "Origin band code",
+            "Band",
+            "Group"
+          ],
+          "examples": [
+            "ABC",
+            "ANY"
+          ],
+          "extraction_rules": [
+            "Field must be an alphanumeric string of 2 to 20 characters.",
+            "Normalize to uppercase."
+          ]
+        },
+        {
+          "name": "name",
+          "dtype": "string",
+          "required": true,
+          "normalize": "collapse_whitespace",
+          "hints": [
+            "Origin band name",
+            "Display name"
+          ],
+          "examples": [
+            "North American Agreement",
+            "European Union",
+            "ASEAN",
+            "Rest of World"
+          ],
+          "extraction_rules": [
+            "Extract the complete name of the origin band.",
+            "Remove any leading or trailing whitespace."
+          ]
+        },
+        {
+          "name": "notes",
+          "dtype": "string",
+          "required": false,
+          "normalize": "collapse_whitespace",
+          "hints": [
+            "Notes",
+            "Definition",
+            "Scope"
+          ],
+          "examples": [
+            "Goods imported from the United States or Mexico.",
+            "Goods imported from any country other than the United States or Mexico."
+          ],
+          "extraction_rules": [
+            "Extract any notes or details related to the origin band.",
+            "Remove any leading or trailing whitespace."
+          ]
+        }
+      ],
+      "business_rules": [
+        "band_code must be uppercase.",
+        "name must not be empty."
+      ],
+      "record_grouping_logic": "Each unique band_code represents one distinct origin band.",
+      "ingestion_gate": {
+        "binary_rules": [
+          "required_fields_present",
+          "no_constraint_violations"
+        ],
+        "quality_thresholds": {
+          "coverage_min": 1.0,
+          "mean_confidence_min": 0.95
+        }
+      },
+      "evidence_rules": {
+        "min_spans_per_field": 1,
+        "require_page_numbers": true
+      }
+    },
+    "deminimis_rules_stg": {
+      "description": "De-minimis thresholds by destination and origin band, defining duty/tax applicability (staging)",
+      "domain_context": "Landed Cost Calculation",
+      "extraction_perspective": "Senior Customs Agent: Extracting de minimis rules to determine duty and tax applicability based on the destination country, origin band, and value of goods.",
+      "primary_key": [
+        "destination_country_iso",
+        "origin_band_code",
+        "value_min"
+      ],
+      "key_fields": [
+        "destination_country_iso",
+        "origin_band_code"
+      ],
+      "fields": [
+        {
+          "name": "destination_country_iso",
+          "dtype": "string",
+          "required": true,
+          "regex": "^[A-Z]{2}$",
+          "normalize": "upper",
+          "hints": [
+            "Destination Country ISO2",
+            "Country"
+          ],
+          "examples": [
+            "US",
+            "CA",
+            "MX",
+            "GB",
+            "DE",
+            "FR",
+            "JP",
+            "AU"
+          ],
+          "extraction_rules": [
+            "Field must be a valid ISO 3166-1 alpha-2 country code.",
+            "Normalize to uppercase."
+          ]
+        },
+        {
+          "name": "origin_band_code",
+          "dtype": "string",
+          "required": true,
+          "normalize": "upper",
+          "hints": [
+            "Origin Band Code",
+            "Band Code"
+          ],
+          "examples": [
+            "NAFTA",
+            "USMCA",
+            "TPP",
+            "CPTPP",
+            "ASEAN",
+            "EU",
+            "MERCOSUR",
+            "CAFTA",
+            "ANY"
+          ],
+          "extraction_rules": [
+            "Field must be an abbreviation of a trade agreement or economic partnership.",
+            "Common trade agreement abbreviations include: NAFTA, USMCA, TPP, CPTPP, ASEAN, EU, MERCOSUR, CAFTA-DR, EFTA, etc.",
+            "Use 'ANY' for rules that apply regardless of trade agreement or origin.",
+            "Normalize to uppercase.",
+            "Must be a valid trade agreement abbreviation from the origin_bands_stg model"
+          ]
+        },
+        {
+          "name": "value_min",
+          "dtype": "number",
+          "units": "currency",
+          "required": true,
+          "range": [
+            0,
+            1000000
+          ],
+          "hints": [
+            "Minimum Value",
+            "From (Currency)"
+          ],
+          "examples": [
+            "0.00",
+            "20.01",
+            "40.01",
+            "150.01"
+          ],
+          "extraction_rules": [
+            "Field must be a number between 0 and 1,000,000.",
+            "Represents the minimum value for the de minimis rule."
+          ]
+        },
+        {
+          "name": "value_max",
+          "dtype": "number",
+          "units": "currency",
+          "required": false,
+          "range": [
+            0,
+            1000000
+          ],
+          "hints": [
+            "Maximum Value",
+            "To (Currency)"
+          ],
+          "examples": [
+            "20.00",
+            "150.00",
+            "0"
+          ],
+          "extraction_rules": [
+            "Field can be a number between 0 and 1,000,000, or 0 to indicate no upper limit.",
+            "Represents the maximum value for the de minimis rule."
+          ]
+        },
+        {
+          "name": "currency_code",
+          "dtype": "string",
+          "required": true,
+          "regex": "^[A-Z]{3}$",
+          "normalize": "upper",
+          "hints": [
+            "Currency",
+            "ISO 4217 code"
+          ],
+          "examples": [
+            "USD",
+            "CAD",
+            "EUR",
+            "GBP",
+            "JPY",
+            "AUD"
+          ],
+          "extraction_rules": [
+            "Field must be a valid ISO 4217 currency code.",
+            "Normalize to uppercase."
+          ]
+        },
+        {
+          "name": "duty_applicable",
+          "dtype": "boolean",
+          "required": true,
+          "hints": [
+            "Duty applies?",
+            "Customs duty applicable"
+          ],
+          "examples": [
+            true,
+            false
+          ],
+          "extraction_rules": [
+            "Value must be a boolean value indicating whether duty is applicable."
+          ]
+        },
+        {
+          "name": "tax_applicable",
+          "dtype": "boolean",
+          "required": true,
+          "hints": [
+            "Tax applies?",
+            "Taxes applicable"
+          ],
+          "examples": [
+            true,
+            false
+          ],
+          "extraction_rules": [
+            "Value must be a boolean value indicating whether tax is applicable."
+          ]
+        },
+        {
+          "name": "note",
+          "dtype": "string",
+          "required": false,
+          "normalize": "collapse_whitespace",
+          "hints": [
+            "Notes",
+            "Description",
+            "Rule details"
+          ],
+          "examples": [
+            "Goods with a value for duty of $20.00 or less will have duties and taxes waived.",
+            "Goods with a value for duty $150.01 or greater will be subject to duties and taxes."
+          ],
+          "extraction_rules": [
+            "Extract any notes or details related to the de minimis rule.",
+            "Remove leading/trailing whitespaces.",
+            "Identify all distinct value thresholds and create records for all implied ranges. Ensure there are no gaps in coverage. For values described as 'X or less', the next band starts at X+0.01. Create an additional record for values greater than a threshold, setting value_min appropriately and value_max to null."
+          ]
+        }
+      ],
+      "business_rules": [
+        "valid_band_range. value_min < coalesce(nullif(value_max,0), 9e18) , 0 in value_max is treated as 'no upper limit'.",
+        "currency_code must be a valid ISO 4217 currency code.",
+        "No overlapping bands should be present within same origin and destination country."
+      ],
+      "record_grouping_logic": "Each unique combination of destination_country_iso, origin_band_code, and value_min represents one distinct de minimis rule.",
+      "ingestion_gate": {
+        "binary_rules": [
+          "required_fields_present",
+          "no_constraint_violations"
+        ],
+        "quality_thresholds": {
+          "coverage_min": 1.0,
+          "mean_confidence_min": 0.95
+        }
+      },
+      "evidence_rules": {
+        "min_spans_per_field": 1,
+        "require_page_numbers": true
+      }
+    }
+  }
+}
+
+FILE CHUNK TO ANALYZE:
+CHUNK 1:
+Implementation of the Canada-United States-Mexico Agreement (CUSMA) De Minimis Thresholds with Respect to Customs Duties and Taxes for Courier Imports Customs Notice 20-18 Ottawa, May 02, 2020 1. Further to Customs Notice 20-14, Implementation of the Canada-United States-Mexico Agreement (CUSMA), dated April 3, 2020, this notice provides information related to the implementation of the CUSMA de minimis thresholds with respect to the application of customs duties and taxes on goods imported into Canada and transported by courier from the United States or Mexico. 2. Under CUSMA, Canada has agreed to maintain a de minimis threshold of at least CAD$150.00 for customs duties, and CAD$40.00 for taxes, at the time or point of importation of goods shipped by courier from the United States or Mexico. There are otherwise no changes to Canada’s existing de minimis framework. Accordingly, postal shipments from the U.S. or Mexico, as well as any courier or postal shipments from any other country, will continue to have a customs duty and tax remission threshold value of up to CAD$20.00. Please note that the new thresholds will apply as of the date the CUSMA enters into force and, for greater clarity, time of importation means the time of release. Implementation of the CUSMA de minimis threshold 3. The CUSMA customs duty and taxation de minimis commitments are being implemented through changes to the Excise Tax Act and the Courier Imports Remission Order. 4. The Excise Tax Act is being amended by clause 39 of Bill C-4, Canada–United States–Mexico Agreement Implementation Act, on the date CUSMA enters into force. 5. The Courier Imports Remission Order is also being amended and this amendment will also enter into effect on the date the CUSMA enters into force. The Courier Imports Remission Order upon CUSMA entry into force 6. As defined in the Courier Imports Remission Order (CIRO) “courier means a commercial carrier that is engaged in scheduled international transportation of shipments of goods other than goods imported by mail”. 7. Upon entry into force of the CUSMA, the following provisions will apply to imported goods that are transported by courier into Canada: Goods with a value for duty of CAD$20.00 or less will have any applicable customs duties and taxes waived when imported from any country; Goods with a value for duty CAD$20.01 or greater that are imported from any country other than the United States or Mexico will continue to be subject to any applicable duties and taxes; Goods with a value for duty of CAD$40.00 or less will have any applicable customs duties and taxes waived when imported from the United States or Mexico only; Goods with a value for duty of CAD$40.01 or greater, up to and including CAD$150.00, will be free of customs duties (however, taxes will remain applicable) when imported from the United States or Mexico only; and Goods with a value for duty CAD$150.01 or greater will be subject to any applicable duties and taxes when imported from any country, including the United States or Mexico. 8. In order to qualify for the CAD$40.00 or CAD$150.00 de minimis thresholds set out in the CUSMA, the goods do not need to originate according to the CUSMA Chapter 4, Rules of Origin, but rather be imported from the United States or Mexico. If the goods were not produced in the United States or Mexico, they must have entered into the commerce of either the United States or Mexico prior to being imported into Canada in order to benefit from the CUSMA de minimis relief. For greater certainty, goods that are shipped from a non-CUSMA country and transit or are trans-shipped through the United States or Mexico, without having entered the commerce of the CUSMA partners, would not be entitled to the CAD$40.00 or CAD$150.00 de minimis thresholds. Exceptions: Goods for which the relief does not apply 9. As per Section 3 “Application” and the definition of “goods” of the CIRO, as well as sections 7 and 7.01 of Schedule VII to the Excise Tax Act, certain types of commercial transactions and imported goods, despite being transported by courier, are not eligible for remission of customs duties and/or taxes (e.g., alcohol and tobacco products). The treatment of these transactions and goods is not affected by the CUSMA and will remain the same after the CUSMA enters into force. For more information, please refer to the corresponding sections of the CIRO and the Excise Tax Act and applicable regulations. 10. In order for courier shipments to receive the benefit of the CIRO, or the benefit of non-taxable status under Schedule VII to the Excise Tax Act, both as amended upon CUSMA’s entry into force, the value for duty must reflect all items that are part of an order by a customer and that are imported, even if the goods are shipped separately at different times or from different warehouses. It is not permitted to divide an order into several packages so that each individual shipment has a value for duty not exceeding CAD$20.00 from any country or CAD$40.00 from the United States or Mexico. 11. As well, the CIRO does not apply to postal importations. The Postal Imports Remission Order will continue to apply to goods imported by mail from any country and is not being amended – it will thus continue to establish a threshold of a value for duty not exceeding CAD$20.00. For more information regarding the Postal Imports Remission Order, please see Memorandum D8-2-2, Postal Imports Remission Order. How to claim the benefits of the CIRO Report 12. Section 12(1) of the Customs Act requires that all imported goods be reported to the Canada Border Services Agency (CBSA). Section 12(3) of the Customs Act outlines by whom the reporting must be completed and is further detailed in Memorandum D3-1-1, Policy Respecting the Importation and Transportation of Goods. Release 13. Courier Low Value Shipment (CLVS) Program participants may claim the CIRO or the benefit of non-taxable status under Schedule VII to the Excise Tax Act when requesting the release of eligible goods, by presenting to the CBSA with a Cargo/Release List (Consist Sheet) as per the information found in Memorandum D8-2-16, Courier Imports Remission or Memorandum D17-4-0, Courier Low Value Shipment Program. Memorandum D8-2-16 will be updated with information pertaining to the CUSMA commitments prior to the time that the CUSMA enters into force.
+
+CHUNK 2:
+14. In order to claim the CIRO (including the CUSMA de minimis) or the benefit of non-taxable status under Schedule VII to the Excise Tax Act, the additional separation of the CIRO categories on the Cargo/Release List is required as follows: Category A: CLVS CIRO shipments with a value for duty of CAD$0 - $20.00 (other than those imported from the United States or Mexico); Category B: CLVS CIRO shipments with a value for duty of CAD$0 - $40.00 (imported from the United States or Mexico); Category C: CLVS CIRO shipments with a value for duty of CAD$40.01 - $150.00 (imported from the United States or Mexico); and Category D: CLVS shipments where duties and taxes are applicable (imported from all countries). 15. Couriers that are not a CLVS Program participant may claim the CIRO or the benefit of non-taxable status under Schedule VII to the Excise Tax Act when requesting the release of eligible goods, by presenting a Cargo Control Document to the CBSA. A Cargo Control Document is a manifest or other control document that acts as the record of a shipment entering Canada. Further information regarding the Cargo Control Document can be found in Memorandum D3-1-1, Policy Respecting the Importation and Transportation of Goods. 16. When claiming the CIRO or the benefit of non-taxable status under Schedule VII to the Excise Tax Act for imported goods transported by courier, the Cargo Control Document presented to the CBSA in the release of goods must clearly state, among other data requirements: (1)For goods imported by courier from any country other than the United States or Mexico: the carrier code of the courier that is transporting the goods into Canada; the place of export from which the goods were transported; a description of goods that ensures the eligibility of the goods vis-à-vis Section 3 “Application” and the definition of “goods” found in the CIRO and non-taxable status under Section 7 of Schedule VII to the Excise Tax Act, according to the nature of the goods; a value for duty of the goods at CAD$0 to $20.00, to ensure eligibility under the CIRO thresholds and non-taxable status under Section 7 of Schedule VII to the Excise Tax Act; and the CIRO Order in Council number 85-2955 (for goods with a value for duty CAD$0 to $20.00). (2)For goods imported by courier from the United States or Mexico the carrier code of the courier that is transporting the goods into Canada; the place of export in the United States or Mexico from which the goods were transported; a description of goods that ensures the eligibility of the goods vis-à-vis Section 3 “Application” and the definition of “goods” found in the CIRO and non-taxable status under Section 7.01 of Schedule VII to the Excise Tax Act, according to the nature of the goods; a value for duty of the goods at CAD$0 to $40.00 or CAD$40.01 to $150.00, to ensure eligibility under the CIRO thresholds and non-taxable status under Section 7.01 of Schedule VII to the Excise Tax Act; and the CIRO Order in Council number 85-2955 (for goods with a value for duty of CAD$0 to $40.00) or Tariff Code number 0017* (for goods with a value for duty of CAD$40.01 to $150.00). * The use of Tariff Code number 0017 does not forego the need for appropriate tariff classification. Note: For goods with a value for duty of CAD$40.01 to $150.00 (imported by courier from the United States or Mexico), a separate Release on Minimum Document interim accounting (see Memorandum D17-1-4, Release of Commercial Goods) or a final accounting is required. 17. Further information regarding the reporting and release procedures can be found in Memorandum D17-1-2, Reporting and Accounting for Low Value Commercial Goods (Not Exceeding CAD$2,500). Goods that are restricted, controlled, or regulated by another government department or agency 18. In order to enable the CBSA to ensure the health, safety and security of Canadians, importers must present the Agency with a separate Release on Minimum Document interim accounting (see Memorandum D17-1-4, Release of Commercial Goods) or a final accounting (including the required permits, licenses or certificates for each shipment if required) to affect the release of the goods that are controlled, prohibited or regulated by another government department or agency. Such goods may still be eligible under CIRO or the benefit of non-taxable status under Schedule VII to the Excise Tax Act. For further information regarding the accounting requirements of such goods, please see the section of this notice entitled, “Goods for which accounting is required under the CIRO”. Accounting Goods for which accounting is not required under the CIRO 19. Imported goods transported by courier from any country, having a value for duty not exceeding CAD$20.00 and eligible under the CIRO or non-taxable status under Section 7 of Schedule VII to the Excise Tax Act, do not require accounting*. 20. Imported goods transported by courier from the United States or Mexico, having a value for duty not exceeding CAD$40.00, and eligible under the CIRO or non-taxable status under Section 7.01 of Schedule VII to the Excise Tax Act, do not require accounting*. 21. As a reminder, it is not permitted to divide an order into several packages so that each individual shipment has a value for duty not exceeding CAD$20.00 from any country or CAD$40.00 from the United States or Mexico. 22. *Imported goods transported by courier with a value for duty not exceeding CAD$20.00 from any country or CAD$40.00 from the United States or Mexico that are restricted, controlled, or regulated by another government department or agency, may qualify under the CIRO or non-taxable status under Schedule VII to the Excise Tax Act, however they must be accounted for. Goods for which accounting is required under the CIRO Courier Low Value Shipment (CLVS) Program participants 23. Additional steps are required to those outlined Memorandum D17-1-10, Coding of Customs Accounting Documents for processing (taxable) CIRO shipments utilizing Consolidated Accounting Documents. Refer to Appendix J, Form B3, Type F - Coding Instructions for Consolidated Accounting Documents of Memorandum D17-1-10 for additional information.
+
+CHUNK 3:
+24. As per the memorandum, consolidated accounting may be separated by (c) Special Authority Shipments. Imported goods transported by courier from the United States or Mexico, having a value for duty of CAD$40.01 to $150.00, and eligible under the CIRO (free of customs duties but tax applicable) must be accounted for and any applicable taxes shall be paid. The following additional information is considered essential for such goods in Field 13, the United States or Mexican place of export from which the goods were transported; in Field 22, a description of goods that ensures the eligibility of the goods vis-à-vis Section 3 “Application” and the definition of “goods” found in the CIRO, according to the nature of the goods; in Field 28, the Tariff Code number 0017; and in Field 37, a value for duty of the goods of CAD$40.01 to $150.00 Note: Field 26, Order in Council field is to be left blank, for Category C, CLVS CIRO shipments CAD$40.01 - $150.00 (imported from the United States or Mexico). 25. The CIRO Order in Council number 85-2955 must continue to be quoted on the supporting documentation including qualifying details where accounting is not required, as it is today. 26. Imported goods transported by courier with a value for duty exceeding CAD$20.00 from any country other than the United States or Mexico, or exceeding CAD$150.00 from the United States or Mexico will continue to require accounting, as per the current CLVS Program procedures. Couriers that are not a CLVS Program participant 27. Imported goods transported by courier from any country except from the United States or Mexico, having a value for duty CAD$20.01 or greater are not eligible under the CIRO or the benefit of non-taxable status under Section 7.01 of Schedule VII to the Excise Tax Act. Such goods must be accounted for and any applicable duties and taxes shall be paid. Goods released outside of the CLVS program must be accounted for by the importer/owner of the goods. Further information regarding the accounting process can be found in Memorandum D17-1-10, Coding of Customs Accounting Documents. 28. Imported goods transported by courier from the United States or Mexico, having a value for duty of CAD $40.01 to $150.00, and eligible under the CIRO (free of customs duty but tax applicable) must be accounted for and any applicable taxes shall be paid. It is not permitted to divide an order into several packages so that each individual shipment from the United States or Mexico has a value for duty not exceeding CAD$150.00. Goods released outside of the CLVS program must be accounted for by the importer/owner of the goods. When claiming the CIRO, the Form B3-3, Canada Customs Coding Form must indicate, among all other data requirements: in Field 13, the United States or Mexican place of export from which the goods were transported; in Field 22, a description of goods that ensures the eligibility of the goods vis-à-vis Section 3 “Application” and the definition of “goods” found in the CIRO, according to the nature of the goods; in Field 28, the Tariff Code number 0017; in Field 37, a value for duty of the goods of CAD$40.01 to $150.00; and in Field 46, the carrier code of the courier that transported the goods into Canada. 29. Further information regarding the accounting process can be found in Memorandum D17-1-10, Coding of Customs Accounting Documents. 30. Imported goods transported by courier with a value for duty not exceeding CAD$20.00 from any country, or CAD$0 to $40.00 or CAD$40.01 to $150.00 from the United States or Mexico, that are restricted, controlled, or regulated by another government department or agency, may qualify under the CIRO or the benefit of non-taxable status under Schedule VII to the Excise Tax Act, however they must be accounted for, including any applicable certificates, licences, permits, or other documents required by other government departments or agencies for each good. 31. When claiming the CIRO for such goods, the Form B3-3, Canada Customs Coding Form, must indicate, among all other data requirements: in Field 26, Order in Council number 85-2955, for goods with a value for duty of CAD$0 - $20.00 (other than those imported from the United States or Mexico); in Field 26, Order in Council number 85-2955, for goods with a value for duty of CAD$0 - $40.00 (imported from the United States or Mexico); or in Field 28, Tariff Code number 0017, for goods with a value for duty of CAD$40.01 - $150.00 (imported from the United States or Mexico). 32. Further information regarding the other government departments or agencies can be found in the series Memoranda D19 - Acts and Regulations of Other Government Departments. 33. Imported goods transported by courier from the United States or Mexico, having a value for duty of CAD$150.01 or greater are not eligible under the CIRO or the benefit of non-taxable status under Sections 7 or 7.01 of Schedule VII to the Excise Tax Act. Such goods must be accounted for and any applicable duties and taxes shall be paid. Goods released outside of the CLVS program must be accounted for by the importer/owner of the goods. Further information regarding the accounting process can be found in Memorandum D17-1-10, Coding of Customs Accounting Documents. Compliance Verification Activities 34. All goods for which the CIRO or the benefit of non-taxable status under Schedule VII to the Excise Tax Act is claimed may be subject to CBSA compliance verification activities. The CBSA may request for further documentation to substantiate the data reported or declared to the CSBA for the purposes of claiming this benefit. Such documentation may include: a Canada Customs Invoice, Commercial Invoice, etc. Additional Information 35. For more information, please call the Border Information Service line from within Canada at 1-800-461-9999 or from abroad at 204-983-3500 or 506-636-5064. Long distance charges may apply. Agents are available Monday to Friday (08:00 to 16:00 local time /except holidays). TTY is also available within Canada at 1-866-335-3237.
+
+
+Analyze this file chunk and determine which database tables it can populate. Return your analysis in this exact JSON structure:
+
+{{
+  "file_analysis": {
+    "file_name": "extracted_or_inferred_filename",
+    "file_type": "csv|pdf|html|excel|other"
+  },
+  "table_mappings": [
+    {
+    "table_name": "exact_table_name",
+    "confidence_score": 0.95,
+    "mapping_rationale": "brief explanation of why this table matches the data"
+    }
+  ],
+  "mapping_summary": {
+    "total_tables_identified": 2,
+    "high_confidence_mappings": 1,
+    "recommended_actions": ["brief list of next steps"]
+    }
+  }
+
+Guidelines:
+- Match using field hints, examples, extraction rules, and business rules from data dictionary
+- Apply regex patterns and data type constraints
+- Use confidence scores: 0.9-1.0 (perfect), 0.7-0.89 (good), 0.5-0.69 (possible), <0.5 (poor)
+- Handle multiple table mappings if applicable
+- Identify required data transformations
+- Flag data quality issues and missing required fields
+- Consider customs/trade domain context for interpretation
+- Validate against primary keys and business rules
+- Be conservative with confidence - flag uncertainties
+
+Return only valid JSON response.

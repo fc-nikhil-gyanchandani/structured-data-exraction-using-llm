@@ -1,0 +1,33 @@
+{
+  "total_prompts": 1,
+  "total_chunks": 3,
+  "source_filter": "canadian_deminimis_thresholds_cusma_notice",
+  "batches": [
+    {
+      "batch_number": 1,
+      "chunk_count": 3,
+      "estimated_tokens": 18394,
+      "chunks": [
+        {
+          "chunk_id": "canadian_deminimis_thresholds_cusma_notice_t0_s0_merged",
+          "source_path": "input_files\\canadian_deminimis_thresholds_cusma_notice.html",
+          "filetype": "html",
+          "tokens_est": 1598
+        },
+        {
+          "chunk_id": "canadian_deminimis_thresholds_cusma_notice_t26_s0_merged",
+          "source_path": "input_files\\canadian_deminimis_thresholds_cusma_notice.html",
+          "filetype": "html",
+          "tokens_est": 1550
+        },
+        {
+          "chunk_id": "canadian_deminimis_thresholds_cusma_notice_t60_s0_merged",
+          "source_path": "input_files\\canadian_deminimis_thresholds_cusma_notice.html",
+          "filetype": "html",
+          "tokens_est": 1516
+        }
+      ],
+      "prompt_file": "canadian_deminimis_thresholds_cusma_notice.txt"
+    }
+  ]
+}

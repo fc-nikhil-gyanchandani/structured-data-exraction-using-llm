@@ -1,0 +1,10 @@
+{
+  "country": "CA",
+  "currency": "CAD",
+  "country_code": "CA",
+  "currency_code": "CAD",
+  "default_language": "en",
+  "timezone": "America/Toronto",
+  "date_format": "YYYY-MM-DD",
+  "number_format": "en-CA"
+}

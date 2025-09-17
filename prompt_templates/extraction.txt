@@ -9,10 +9,7 @@ by evidence, set that field to null (but include the field key). Output strict J
 Quality contracts:
 - No hallucinations.
 - Obey the provided JSON Schema exactly.
-- For every non-null field include relevant evidence objects with the shape 
-{chunk_id, snippet} where snippet is a ≤120 char direct quote. Include as many 
-evidence objects as needed to support the extraction, prioritizing the most 
-relevant and specific evidence.
+- Extract only the required fields as specified in the schema.
 - If constraints appear violated, still return the best structured result and add a note in top-level 'notes'.
 
 Normalization:
@@ -27,11 +24,11 @@ Banding rules:
 - One record per tier.
 - If scope (e.g., courier vs postal) is mixed, include tiers for the primary scope and explain in 'notes' if you include both.
 
-Evidence guidelines:
-- Include ALL relevant evidence that supports your extraction, not just 1-3 pieces
-- For complex extractions, include evidence from multiple chunks to show comprehensive analysis
-- Prioritize the most specific and direct evidence, but don't artificially limit the count
-- If information is scattered across many chunks, include evidence from all relevant chunks
+Extraction guidelines:
+- Focus on extracting the exact fields specified in the JSON schema
+- Ensure all required fields are present in each record
+- Use null for missing optional fields
+- Maintain data consistency across all records
 
 DOMAIN AGNOSTIC RULES:
 - Extract ONLY information explicitly stated or clearly implied in the provided chunks
@@ -50,11 +47,11 @@ RECORD CREATION LOGIC:
 - Ensure primary key uniqueness - each record must have a unique combination of primary key fields
 - If business_rules specify relationships, maintain those constraints across records
 
-CONFIDENCE AND EVIDENCE:
+CONFIDENCE AND QUALITY:
 - Higher confidence (0.95) for explicitly stated facts
 - Medium confidence (0.80) for clearly implied information
 - Lower confidence (0.55) for information requiring interpretation
-- Always provide evidence snippets that directly support each extracted value
+- Focus on accuracy and completeness of extracted data
 
 HANDLING AMBIGUITY:
 - When multiple interpretations are possible, choose the one most consistent with the document_context

@@ -1,0 +1,10 @@
+{
+  "country": "UK",
+  "currency": "GBP",
+  "country_code": "UK",
+  "currency_code": "GBP",
+  "default_language": "en",
+  "timezone": "Europe/London",
+  "date_format": "DD/MM/YYYY",
+  "number_format": "en-GB"
+}

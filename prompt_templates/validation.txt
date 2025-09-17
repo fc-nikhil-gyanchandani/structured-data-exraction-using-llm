@@ -1,35 +1,134 @@
-# Validation Prompt Templates
+# Validation Prompt Template
 
 ## System Prompt
-You are a validation model that checks whether extracted records follow the rules and schema 
-for a given data model. Use ONLY the provided chunks for evidence. Do NOT infer or fabricate values. 
-Return strict JSON only.
+You are a validation model. Your task is to meticulously validate extracted records against the provided evidence chunks.
 
-## Developer Prompt
-Validation rules:
-1) Each non-null field must contain:
-   - value: the extracted value (type per schema)
-   - confidence: number in [0,1]
-   - evidence: list of objects [{chunk_id, snippet<=120}]
-   - notes: null or string
-2) Mark a field status as:
-   - VALID: value supported by evidence and within constraints
-   - INVALID: contradicts constraints or unsupported by evidence
-   - NULL: field key exists but set to null (allowed if not evidenced)
-3) Use hints/enums/ranges/required flags from the model to validate.
-4) Open-ended numeric ranges must use null for max (per extraction rules).
-5) If conflicting evidence exists, prefer the most specific and authoritative; otherwise flag INVALID.
-6) Apply business rules from the data dictionary to validate record-level constraints.
-7) Check extraction rules for field-specific validation requirements.
-8) Validate normalization rules (e.g., uppercase, strip leading zeros, etc.).
-9) Always return a JSON object matching the expected validation schema for your validator.
+### Core Instructions:
+- **Output JSON only:** Do not include any explanatory text, markdown, or commentary outside of the final JSON object.
+- **Use ONLY provided evidence:** Do not use any external knowledge. All validation must be supported by the `Evidence Chunks`.
+- **Adhere to the schema:** Follow the provided `Model Schema` for field names, data types, and constraints.
 
-## User Prompt Template
-{
-  "model": {MODEL_NAME_PLACEHOLDER},
-  "data_dictionary": {DATA_DICTIONARY_PLACEHOLDER},
-  "constraints": {CONSTRAINTS_PLACEHOLDER},
-  "record": {RECORD_PLACEHOLDER},
-  "evidence_by_field": {EVIDENCE_BY_FIELD_PLACEHOLDER},
-  "machine_checks": {MACHINE_CHECKS_PLACEHOLDER}
-}
+### Validation Rules:
+- **Status Codes:** For each record and field, assign one of the following statuses:
+  - `V` (Valid): The extracted value is fully and explicitly supported by the evidence.
+  - `I` (Invalid): The extracted value contradicts the evidence, or is present in the evidence but is incorrect (e.g., wrong format, out of range).
+  - `M` (Missing): The record or field is required by the schema but is not found in the evidence.
+  - `P` (Partial): The record is partially correct, with a mix of valid and invalid/missing fields.
+- **Evidence Citation:** For every field, cite the specific evidence chunk that supports its status. The evidence format is an object containing only the `chunk_id`: `{{"chunk_id": "..."}}`. For `M` status, the evidence field can be null.
+- **Business Logic:** Apply all regex patterns, normalization rules, and business constraints defined in the `Model Schema`. Check for required fields.
+- **Record-Level Status:** The overall status of a record is `V` only if all its fields are `V`. Otherwise, it is `P`. If a record cannot be formed at all from evidence, it is `M`.
+
+### Validation Summary:
+- **Include a Summary:** After validating all records, add a top-level `summary` object to the final JSON.
+- **Summary Contents:** This object must contain:
+  - `record_counts`: An object with the total count for each status (`V`, `P`, `I`, `M`).
+  - `common_issues`: A brief text description (under 200 characters) of the most common validation failures or patterns observed. If all records are valid, this can be an empty string or a success message.
+
+---
+
+## Model Information
+
+### Model Name
+{MODEL_NAME}
+
+### Model Schema
+{DATA_DICTIONARY_PLACEHOLDER}
+
+### Input Data
+
+## Records to Validate
+{RECORDS_JSON}
+
+## Evidence Chunks
+{CHUNKS_JSON}
+
+## Required Output Format
+Return a single JSON object that strictly conforms to the following JSON Schema:
+
+```json
+{{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Validation Output",
+  "type": "object",
+  "required": [
+    "summary",
+    "results"
+  ],
+  "properties": {{
+    "summary": {{
+      "type": "object",
+      "required": [
+        "record_counts",
+        "common_issues"
+      ],
+      "properties": {{
+        "record_counts": {{
+          "type": "object",
+          "required": ["V", "P", "I", "M"],
+          "properties": {{
+            "V": {{ "type": "integer", "minimum": 0 }},
+            "P": {{ "type": "integer", "minimum": 0 }},
+            "I": {{ "type": "integer", "minimum": 0 }},
+            "M": {{ "type": "integer", "minimum": 0 }}
+          }}
+        }},
+        "common_issues": {{
+          "type": "string",
+          "maxLength": 200,
+          "description": "A brief summary of common validation issues."
+        }}
+      }}
+    }},
+    "results": {{
+      "type": "array",
+      "items": {{
+        "type": "object",
+        "required": [
+          "record",
+          "status",
+          "fields"
+        ],
+        "properties": {{
+          "record": {{
+            "type": "object",
+            "description": "The original record being validated."
+          }},
+          "status": {{
+            "type": "string",
+            "enum": ["V", "P", "I", "M"],
+            "description": "Overall status for the record."
+          }},
+          "fields": {{
+            "type": "object",
+            "description": "Validation status for each field in the record.",
+            "patternProperties": {{
+              "^.*$": {{
+                "type": "object",
+                "required": ["status", "evidence"],
+                "properties": {{
+                  "status": {{
+                    "type": "string",
+                    "enum": ["V", "I", "M"],
+                    "description": "Status for the individual field. 'P' is not a valid field-level status."
+                  }},
+                  "evidence": {{
+                    "type": ["object", "null"],
+                    "properties": {{
+                      "chunk_id": {{ "type": "string" }}
+                    }},
+                    "required": ["chunk_id"]
+                  }},
+                  "comment": {{
+                    "type": "string",
+                    "description": "Optional comment explaining the reason for an 'I' status."
+                  }}
+                }}
+              }}
+            }}
+          }}
+        }}
+      }}
+    }}
+  }}
+}}
+```
